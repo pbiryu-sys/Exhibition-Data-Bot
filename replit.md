@@ -1,36 +1,46 @@
-# [Project name]
+# Exhibition Procurement Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Telegram bot that collects product data from exhibitions and returns formatted price cards with calculated landed cost and retail price.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `cd artifacts/tg-bot && python3 bot.py` — run the Telegram bot (managed via "Telegram Bot" workflow)
+- Required secret: `TELEGRAM_BOT_TOKEN` — from @BotFather on Telegram
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Python 3.12
+- python-telegram-bot 20.7 (async, ConversationHandler)
+- Settings stored in `artifacts/tg-bot/settings.json` (editable at runtime via bot)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/tg-bot/bot.py` — main bot logic, conversation handlers
+- `artifacts/tg-bot/pricing.py` — pricing engine (COST and SELL_PRICE formulas)
+- `artifacts/tg-bot/formatters.py` — card formatting and settings display
+- `artifacts/tg-bot/states.py` — ConversationHandler state enums
+- `artifacts/tg-bot/settings.json` — runtime-editable pricing parameters
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Settings are stored in a JSON file and loaded fresh on every card calculation — changing margin/VAT/rates takes effect immediately, no restart needed.
+- ConversationHandler per feature (product entry, settings) with `allow_reentry=True` so users can restart mid-flow.
+- Photo is optional (via /skip) and sent as caption when present.
+- All pricing params are dynamic; nothing is hardcoded in formulas.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Step-by-step 7-step flow: photo → factory → category → article → FOB price → 40HQ qty → note
+- Outputs formatted card: FOB in USD + RUB, logistics/customs breakdown per unit, landed cost, retail price, factory tag + year
+- Settings panel to adjust: margin, VAT, exchange rate, container cost, customs %, broker/terminal/storage/forwarder fees
+
+## Pricing formula
+
+```
+per_unit_logistics = (container_cost + broker_fee + terminal_fee + storage_fee + forwarder_fee + customs_total) / qty_40hq
+COST = fob_usd * exchange_rate + per_unit_logistics
+SELL_PRICE = COST / (1 - margin) * vat
+```
 
 ## User preferences
 
@@ -38,8 +48,6 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- python-telegram-bot 20.x is fully async; do not mix sync handlers
+- settings.json is read on every calculation — no caching needed
+- `pnpm-workspace` and Node.js artifacts coexist; bot is pure Python in `artifacts/tg-bot/`

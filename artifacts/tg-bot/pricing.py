@@ -16,39 +16,50 @@ def save_settings(settings: dict) -> None:
 
 def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict) -> dict:
     s = settings
-    exchange_rate = s["exchange_rate"]
-    container_cost = s["container_cost"]
-    customs_fee_rate = s["customs_fee"]
-    broker_fee = s["broker_fee"]
-    terminal_fee = s["terminal_fee"]
-    storage_fee = s["storage_fee"]
-    forwarder_fee = s["forwarder_fee"]
-    margin = s["margin"]
-    vat = s["vat"]
+    exchange_rate    = s["exchange_rate"]       # USD → KZT
+    container_cost   = s["container_cost"]      # stored in USD → converted below
+    customs_fee_rate = s["customs_fee"]         # fraction (e.g. 0.15)
+    broker_fee       = s["broker_fee"]          # KZT
+    terminal_fee     = s["terminal_fee"]        # KZT
+    storage_fee      = s["storage_fee"]         # KZT
+    forwarder_fee    = s["forwarder_fee"]       # KZT
+    margin           = s["margin"]
+    vat              = s["vat"]
 
-    fob_rub = fob_price_usd * exchange_rate
+    # Step 1 — FOB in KZT (O1)
+    fob_kzt = fob_price_usd * exchange_rate
 
-    total_container_expenses = (
-        container_cost + broker_fee + terminal_fee + storage_fee + forwarder_fee
+    # Step 2 — Container cost converted USD → KZT (O2)
+    container_cost_kzt = container_cost * exchange_rate
+
+    # Step 3 — Customs on total container FOB value, result in KZT
+    customs_total_kzt = fob_kzt * qty_40hq * customs_fee_rate
+
+    # Step 4 — All KZT logistics per container
+    fixed_fees_kzt = broker_fee + terminal_fee + storage_fee + forwarder_fee
+
+    # Step 5 — Total KZT for the whole container
+    total_kzt = (
+        fob_kzt * qty_40hq
+        + container_cost_kzt
+        + fixed_fees_kzt
+        + customs_total_kzt
     )
 
-    customs_total = fob_rub * qty_40hq * customs_fee_rate
+    # Step 6 — Unit cost and sell price (E5 = qty_40hq)
+    unit_cost  = total_kzt / qty_40hq if qty_40hq > 0 else 0
+    sell_price = unit_cost / (1 - margin) * vat
 
-    per_unit_logistics = (total_container_expenses + customs_total) / qty_40hq if qty_40hq > 0 else 0
-
-    cost = fob_rub + per_unit_logistics
-
-    sell_price = cost / (1 - margin) * vat
+    # Per-unit breakdown for card display
+    logistics_per_unit = (
+        (container_cost_kzt + fixed_fees_kzt) / qty_40hq if qty_40hq > 0 else 0
+    )
+    customs_per_unit = customs_total_kzt / qty_40hq if qty_40hq > 0 else 0
 
     return {
-        "fob_rub": round(fob_rub, 2),
-        "per_unit_logistics": round(per_unit_logistics, 2),
-        "cost": round(cost, 2),
-        "sell_price": round(sell_price, 2),
-        "customs_per_unit": round(customs_total / qty_40hq if qty_40hq > 0 else 0, 2),
-        "container_per_unit": round(
-            (container_cost + broker_fee + terminal_fee + storage_fee + forwarder_fee) / qty_40hq
-            if qty_40hq > 0 else 0,
-            2,
-        ),
+        "fob_kzt":            round(fob_kzt, 2),
+        "logistics_per_unit": round(logistics_per_unit, 2),
+        "customs_per_unit":   round(customs_per_unit, 2),
+        "unit_cost":          round(unit_cost, 2),
+        "sell_price":         round(sell_price, 2),
     }

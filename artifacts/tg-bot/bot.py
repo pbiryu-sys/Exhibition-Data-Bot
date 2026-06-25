@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 SETTINGS_KEYS = [
     ("margin", "Маржа (напр. 0.59)"),
     ("vat", "НДС множитель (напр. 1.16)"),
-    ("exchange_rate", "Курс USD/RUB (напр. 90.0)"),
-    ("container_cost", "Стоимость контейнера, ₽"),
+    ("exchange_rate", "Курс USD/KZT (напр. 450.0)"),
+    ("container_cost", "Стоимость контейнера, USD"),
     ("customs_fee", "Таможня, доля (напр. 0.15)"),
-    ("broker_fee", "Брокер, ₽"),
-    ("terminal_fee", "Терминал, ₽"),
-    ("storage_fee", "Хранение, ₽"),
-    ("forwarder_fee", "Экспедитор, ₽"),
+    ("broker_fee", "Брокер, ₸"),
+    ("terminal_fee", "Терминал, ₸"),
+    ("storage_fee", "Хранение, ₸"),
+    ("forwarder_fee", "Экспедитор, ₸"),
 ]
 
 FACTORY_OPTIONS = ["DHZ", "WNQ", "Matrix OEM", "Johnson clone", "Другое (ввести)"]

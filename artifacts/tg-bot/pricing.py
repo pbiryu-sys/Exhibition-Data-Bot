@@ -52,20 +52,30 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
     vat    = settings["vat"]
 
     # ── Stage 1: build frozen base-cell snapshot ─────────────────────────────
-    # Each cell computed exactly once. After this block, no cell may be
-    # re-derived or recomputed — downstream formulas reference snapshot only.
+    # Evaluation order mirrors Excel dependency graph exactly.
+    # Each cell is written ONCE to snap[]. After its line, it is immutable.
+    # Downstream cells read only from snap[] — never re-derive any value.
 
     snap = {}
-    snap["K5"] = fob_price_usd * qty_40hq * O1          # F5 * D5 * O1 — full precision
-    snap["L5"] = O1 * O2                                  # rate × qty    — full precision, STATIC per input
-    snap["M5"] = (snap["K5"] * 0.05) + ((snap["L5"] * 0.95) * 0.05)   # full precision
-    snap["N5"] = settings["customs_fee_kzt"]              # flat KZT constant
 
-    # Snapshot is now closed — no further writes to K5/L5/M5/N5 allowed.
-    # All downstream cells read from snap[] only.
+    # STEP 1 — L5 (shared dependency: used by both M5 and O5; must freeze first)
+    snap["L5"] = O1 * O2                                           # rate × qty — STATIC, frozen from here
+
+    # STEP 2 — K5 (independent of L5)
+    snap["K5"] = fob_price_usd * qty_40hq * O1                    # F5 * D5 * O1 — full precision
+
+    # STEP 3 — M5 (depends on frozen L5 and frozen K5 only)
+    snap["M5"] = (snap["K5"] * 0.05) + ((snap["L5"] * 0.95) * 0.05)
+
+    # STEP 4 — N5 (constant, no dependency)
+    snap["N5"] = settings["customs_fee_kzt"]
+
+    # Snapshot closed — L5/K5/M5/N5 will not be written again.
+    # All downstream formulas reference snap[] exclusively.
 
     # ── Stage 2: downstream cells reference snapshot exclusively ─────────────
 
+    # O5 uses ONLY frozen snap["L5"] and frozen snap["M5"] from above
     snap["O5"] = round(
         ((snap["L5"] * 0.85) + snap["N5"] + snap["M5"] + snap["K5"]) * 0.16,
         2,

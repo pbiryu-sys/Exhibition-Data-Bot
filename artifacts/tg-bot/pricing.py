@@ -48,30 +48,47 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
     margin = settings["margin"]
     vat    = settings["vat"]
 
-    # ── Excel columns ─────────────────────────────────────────────────────────
+    # ── Stage 1: build frozen base-cell snapshot ─────────────────────────────
+    # Each cell computed exactly once. After this block, no cell may be
+    # re-derived or recomputed — downstream formulas reference snapshot only.
 
-    K5 = fob_price_usd * qty_40hq * O1               # FOB KZT container-level — full precision
+    snap = {}
+    snap["K5"] = fob_price_usd * qty_40hq * O1          # F5 * D5 * O1 — full precision
+    snap["L5"] = O1 * O2                                  # rate × qty    — full precision, STATIC per input
+    snap["M5"] = (snap["K5"] * 0.05) + ((snap["L5"] * 0.95) * 0.05)   # full precision
+    snap["N5"] = settings["customs_fee_kzt"]              # flat KZT constant
 
-    L5 = O1 * O2                                     # container freight base — full precision
+    # Snapshot is now closed — no further writes to K5/L5/M5/N5 allowed.
+    # All downstream cells read from snap[] only.
 
-    M5 = (K5 * 0.05) + ((L5 * 0.95) * 0.05)        # insurance/handling — full precision
+    # ── Stage 2: downstream cells reference snapshot exclusively ─────────────
 
-    N5 = settings["customs_fee_kzt"]                 # customs duty flat KZT — constant
+    snap["O5"] = round(
+        ((snap["L5"] * 0.85) + snap["N5"] + snap["M5"] + snap["K5"]) * 0.16,
+        2,
+    )
 
-    O5 = round(((L5 * 0.85) + N5 + M5 + K5) * 0.16, 2)   # VAT — rounded at result only
+    snap["P5"] = settings["terminal_fee_kzt"]
+    snap["Q5"] = settings["storage_fee_kzt"]
+    snap["R5"] = settings["broker_fee_kzt"]
+    snap["S5"] = settings["forwarder_fee_kzt"]
 
-    P5 = settings["terminal_fee_kzt"]
-    Q5 = settings["storage_fee_kzt"]
-    R5 = settings["broker_fee_kzt"]
-    S5 = settings["forwarder_fee_kzt"]
+    snap["T5"] = round(
+        snap["K5"] + snap["L5"] + snap["M5"] + snap["N5"] + snap["O5"]
+        + snap["P5"] + snap["Q5"] + snap["R5"] + snap["S5"],
+        2,
+    )
 
-    T5 = round(K5 + L5 + M5 + N5 + O5 + P5 + Q5 + R5 + S5, 2)   # SUM(K5:S5)
+    snap["U5"] = round(snap["T5"] / qty_40hq, 2) if qty_40hq > 0 else 0
 
-    U5 = round(T5 / qty_40hq, 2) if qty_40hq > 0 else 0            # unit cost
+    snap["V5"] = round(snap["T5"] - snap["O5"], 2)
 
-    V5 = round(T5 - O5, 2)                                           # net ex-VAT
+    SELL_PRICE = round(snap["U5"] / (1 - margin) * vat, 2)
 
-    SELL_PRICE = round(U5 / (1 - margin) * vat, 2)
+    # Convenience aliases for return / debug
+    K5 = snap["K5"]; L5 = snap["L5"]; M5 = snap["M5"]; N5 = snap["N5"]
+    O5 = snap["O5"]; T5 = snap["T5"]; U5 = snap["U5"]; V5 = snap["V5"]
+    P5 = snap["P5"]; Q5 = snap["Q5"]; R5 = snap["R5"]; S5 = snap["S5"]
 
     # ── Internal debug log (not shown in UI) ──────────────────────────────────
     logger.debug(

@@ -50,7 +50,7 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
 
     # ── Excel columns ─────────────────────────────────────────────────────────
 
-    K5 = fob_price_usd * O1                          # FOB KZT per unit
+    K5 = fob_price_usd * qty_40hq * O1               # FOB KZT container-level (F5 * D5 * O1)
 
     L5 = O1 * O2                                     # container freight base
 

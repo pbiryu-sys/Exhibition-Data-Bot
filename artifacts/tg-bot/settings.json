@@ -2,7 +2,7 @@
   "margin": 0.59,
   "vat": 1.16,
   "exchange_rate": 450.0,
-  "container_cost": 3500.0,
+  "container_cost": 1575000.0,
   "customs_fee": 0.15,
   "broker_fee": 150000.0,
   "terminal_fee": 180000.0,

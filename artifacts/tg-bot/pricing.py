@@ -16,8 +16,8 @@ def save_settings(settings: dict) -> None:
 
 def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict) -> dict:
     s = settings
-    exchange_rate    = s["exchange_rate"]       # USD → KZT
-    container_cost   = s["container_cost"]      # stored in USD → converted below
+    exchange_rate    = s["exchange_rate"]       # manual internal procurement rate (USD → KZT), used ONLY for FOB
+    container_cost   = s["container_cost"]      # KZT — stored and used as-is
     customs_fee_rate = s["customs_fee"]         # fraction (e.g. 0.15)
     broker_fee       = s["broker_fee"]          # KZT
     terminal_fee     = s["terminal_fee"]        # KZT
@@ -26,11 +26,11 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
     margin           = s["margin"]
     vat              = s["vat"]
 
-    # Step 1 — FOB in KZT (O1)
+    # Step 1 — FOB_KZT = FOB_USD * exchange_rate (only place exchange_rate is applied)
     fob_kzt = fob_price_usd * exchange_rate
 
-    # Step 2 — Container cost converted USD → KZT (O2)
-    container_cost_kzt = container_cost * exchange_rate
+    # Step 2 — Container cost is already in KZT, no conversion
+    container_cost_kzt = container_cost
 
     # Step 3 — Customs on total container FOB value, result in KZT
     customs_total_kzt = fob_kzt * qty_40hq * customs_fee_rate

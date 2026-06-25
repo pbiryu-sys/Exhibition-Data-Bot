@@ -53,7 +53,7 @@ def format_settings(settings: dict) -> str:
         f"1. Маржа:                <b>{settings['margin']}</b> ({int(settings['margin']*100)}%)",
         f"2. НДС:                  <b>{settings['vat']}</b> ({int((settings['vat']-1)*100)}%)",
         f"3. Курс USD/KZT:         <b>{settings['exchange_rate']}</b>",
-        f"4. Стоимость контейнера: <b>${settings['container_cost']:,.0f}</b> USD",
+        f"4. Стоимость контейнера: <b>{settings['container_cost']:,.0f} ₸</b>",
         f"5. Таможня (%):          <b>{settings['customs_fee']}</b> ({int(settings['customs_fee']*100)}%)",
         f"6. Брокер:               <b>{settings['broker_fee']:,.0f} ₸</b>",
         f"7. Терминал:             <b>{settings['terminal_fee']:,.0f} ₸</b>",

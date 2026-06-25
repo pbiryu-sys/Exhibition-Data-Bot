@@ -50,15 +50,15 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
 
     # ── Excel columns ─────────────────────────────────────────────────────────
 
-    K5 = round(fob_price_usd * qty_40hq * O1, 2)               # FOB KZT container-level (F5 * D5 * O1)
+    K5 = fob_price_usd * qty_40hq * O1               # FOB KZT container-level — full precision
 
-    L5 = round(O1 * O2, 2)                                     # container freight base
+    L5 = O1 * O2                                     # container freight base — full precision
 
-    M5 = round((K5 * 0.05) + ((L5 * 0.95) * 0.05), 2)        # insurance/handling
+    M5 = (K5 * 0.05) + ((L5 * 0.95) * 0.05)        # insurance/handling — full precision
 
-    N5 = settings["customs_fee_kzt"]                            # customs duty flat KZT (integer, no rounding needed)
+    N5 = settings["customs_fee_kzt"]                 # customs duty flat KZT — constant
 
-    O5 = round(((L5 * 0.85) + N5 + M5 + K5) * 0.16, 2)       # VAT on container
+    O5 = round(((L5 * 0.85) + N5 + M5 + K5) * 0.16, 2)   # VAT — rounded at result only
 
     P5 = settings["terminal_fee_kzt"]
     Q5 = settings["storage_fee_kzt"]

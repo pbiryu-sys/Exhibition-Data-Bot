@@ -50,28 +50,28 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
 
     # ── Excel columns ─────────────────────────────────────────────────────────
 
-    K5 = fob_price_usd * qty_40hq * O1               # FOB KZT container-level (F5 * D5 * O1)
+    K5 = round(fob_price_usd * qty_40hq * O1, 2)               # FOB KZT container-level (F5 * D5 * O1)
 
-    L5 = O1 * O2                                     # container freight base
+    L5 = round(O1 * O2, 2)                                     # container freight base
 
-    M5 = (K5 * 0.05) + ((L5 * 0.95) * 0.05)        # insurance/handling
+    M5 = round((K5 * 0.05) + ((L5 * 0.95) * 0.05), 2)        # insurance/handling
 
-    N5 = settings["customs_fee_kzt"]                 # customs duty flat KZT
+    N5 = settings["customs_fee_kzt"]                            # customs duty flat KZT (integer, no rounding needed)
 
-    O5 = ((L5 * 0.85) + N5 + M5 + K5) * 0.16       # VAT on container
+    O5 = round(((L5 * 0.85) + N5 + M5 + K5) * 0.16, 2)       # VAT on container
 
     P5 = settings["terminal_fee_kzt"]
     Q5 = settings["storage_fee_kzt"]
     R5 = settings["broker_fee_kzt"]
     S5 = settings["forwarder_fee_kzt"]
 
-    T5 = K5 + L5 + M5 + N5 + O5 + P5 + Q5 + R5 + S5   # SUM(K5:S5)
+    T5 = round(K5 + L5 + M5 + N5 + O5 + P5 + Q5 + R5 + S5, 2)   # SUM(K5:S5)
 
-    U5 = T5 / qty_40hq if qty_40hq > 0 else 0           # unit cost
+    U5 = round(T5 / qty_40hq, 2) if qty_40hq > 0 else 0            # unit cost
 
-    V5 = T5 - O5                                          # net ex-VAT
+    V5 = round(T5 - O5, 2)                                           # net ex-VAT
 
-    SELL_PRICE = U5 / (1 - margin) * vat
+    SELL_PRICE = round(U5 / (1 - margin) * vat, 2)
 
     # ── Internal debug log (not shown in UI) ──────────────────────────────────
     logger.debug(

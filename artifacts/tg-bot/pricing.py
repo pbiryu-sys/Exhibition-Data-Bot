@@ -18,7 +18,7 @@ def save_settings(settings: dict) -> None:
 
 def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict) -> dict:
     """
-    Strict 1:1 replication of Excel columns F5–V5.
+    Strict 1:1 replication of Excel columns F5–V5 + G5.
 
     Excel cell mapping:
       E5  = qty_40hq
@@ -26,7 +26,7 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
       O1  = exchange_rate   (manual internal rate, USD→KZT)
       O2  = qty_40hq        (same as E5, used in L5 formula)
 
-      K5  = F5 * O1                              — FOB in KZT (per unit × rate)
+      K5  = F5 * O1                              — FOB in KZT (container total)
       L5  = O1 * O2                              — container freight base (rate × qty)
       M5  = (K5 * 5%) + ((L5 * 95%) * 5%)       — insurance/handling
       N5  = settings.customs_fee_kzt             — customs duty (configurable flat KZT)
@@ -36,11 +36,14 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
       R5  = settings.broker_fee_kzt
       S5  = settings.forwarder_fee_kzt
 
-      T5  = SUM(K5:S5)   — total container cost
-      U5  = T5 / E5      — unit cost
-      V5  = T5 - O5      — net container cost (ex-VAT)
+      T5  = SUM(K5:S5)   — total container cost (aggregation layer)
+      U5  = T5 / E5      — unit cost (unit derivation layer)
+      V5  = T5 - O5      — net container cost ex-VAT (diagnostic)
 
-    SELL_PRICE = U5 / (1 - margin) * vat
+    ── ROOT PRICING NODE ──────────────────────────────────────────────────────
+      G5  = U5 / (1 - margin) * vat   PRIMARY SOURCE OF TRUTH (retail price)
+            All validation must anchor to G5. T5/U5/V5 are cost-breakdown
+            diagnostics only. G5_bot == G5_excel is the exact-match target.
     """
     O1 = settings["exchange_rate"]       # manual internal procurement rate
     O2 = qty_40hq                        # E5 / O2 are both qty_40hq
@@ -83,35 +86,46 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
 
     snap["V5"] = round(snap["T5"] - snap["O5"], 2)
 
-    SELL_PRICE = round(snap["U5"] / (1 - margin) * vat, 2)
+    # ── G5: ROOT PRICING NODE — primary source of truth ──────────────────────
+    # G5_bot == G5_excel is the exact-match validation target.
+    # T5 / U5 / V5 above are cost-breakdown diagnostics only.
+    snap["G5"] = round(snap["U5"] / (1 - margin) * vat, 2)
 
     # Convenience aliases for return / debug
     K5 = snap["K5"]; L5 = snap["L5"]; M5 = snap["M5"]; N5 = snap["N5"]
-    O5 = snap["O5"]; T5 = snap["T5"]; U5 = snap["U5"]; V5 = snap["V5"]
-    P5 = snap["P5"]; Q5 = snap["Q5"]; R5 = snap["R5"]; S5 = snap["S5"]
+    O5 = snap["O5"]; P5 = snap["P5"]; Q5 = snap["Q5"]; R5 = snap["R5"]
+    S5 = snap["S5"]; T5 = snap["T5"]; U5 = snap["U5"]; V5 = snap["V5"]
+    G5 = snap["G5"]
 
     # ── Internal debug log (not shown in UI) ──────────────────────────────────
     logger.debug(
         "PRICING DEBUG | FOB_USD=%.4f qty=%d | "
-        "K5(FOB_KZT)=%.2f | L5=%.2f | M5=%.2f | N5=%.2f | O5(VAT)=%.2f | "
+        "K5(FOB_KZT)=%.4f | L5=%.4f | M5=%.4f | N5=%.2f | O5(VAT)=%.2f | "
         "P5=%.2f | Q5=%.2f | R5=%.2f | S5=%.2f | "
-        "T5(TOTAL)=%.2f | U5(UNIT_COST)=%.2f | V5(NET)=%.2f | SELL=%.2f",
+        "T5(TOTAL)=%.2f | U5(UNIT)=%.2f | V5(NET)=%.2f | "
+        ">>> G5(ROOT)=%.2f <<<",
         fob_price_usd, qty_40hq,
         K5, L5, M5, N5, O5,
         P5, Q5, R5, S5,
-        T5, U5, V5, SELL_PRICE,
+        T5, U5, V5, G5,
     )
 
     return {
+        # ── ROOT (primary validation target) ─────────────────────────────────
+        "G5":                 G5,           # retail price — anchor G5_bot == G5_excel
+
+        # ── Cost breakdown (diagnostic layer) ─────────────────────────────────
         "fob_kzt":            round(K5, 2),
         "L5":                 round(L5, 2),
         "M5":                 round(M5, 2),
         "N5":                 round(N5, 2),
-        "O5_vat":             round(O5, 2),
+        "O5_vat":             O5,
         "logistics_per_unit": round((L5 + M5 + N5 + O5 + P5 + Q5 + R5 + S5) / qty_40hq if qty_40hq > 0 else 0, 2),
         "customs_per_unit":   round(N5 / qty_40hq if qty_40hq > 0 else 0, 2),
-        "total_container":    round(T5, 2),
-        "unit_cost":          round(U5, 2),
-        "net_ex_vat":         round(V5, 2),
-        "sell_price":         round(SELL_PRICE, 2),
+        "total_container":    T5,
+        "unit_cost":          U5,
+        "net_ex_vat":         V5,
+
+        # ── Legacy alias (keeps formatter working without change) ─────────────
+        "sell_price":         G5,
     }

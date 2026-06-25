@@ -1,7 +1,9 @@
 import json
+import logging
 import os
 
 SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "settings.json")
+logger = logging.getLogger(__name__)
 
 
 def load_settings() -> dict:
@@ -15,50 +17,84 @@ def save_settings(settings: dict) -> None:
 
 
 def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict) -> dict:
-    s = settings
-    exchange_rate    = s["exchange_rate"]   # manual internal procurement rate — applied ONLY to FOB
-    container_cost   = s["container_cost"]  # KZT
-    customs_fee_rate = s["customs_fee"]     # fraction
-    broker_fee       = s["broker_fee"]      # KZT
-    terminal_fee     = s["terminal_fee"]    # KZT
-    storage_fee      = s["storage_fee"]     # KZT
-    forwarder_fee    = s["forwarder_fee"]   # KZT
-    margin           = s["margin"]
-    vat              = s["vat"]
+    """
+    Strict 1:1 replication of Excel columns F5–V5.
 
-    # ── Stage 1: container-level aggregation ─────────────────────────────────
+    Excel cell mapping:
+      E5  = qty_40hq
+      F5  = fob_price_usd
+      O1  = exchange_rate   (manual internal rate, USD→KZT)
+      O2  = qty_40hq        (same as E5, used in L5 formula)
 
-    # FOB for entire container in KZT (exchange_rate applied only here)
-    fob_total_kzt = fob_price_usd * exchange_rate * qty_40hq
+      K5  = F5 * O1                              — FOB in KZT (per unit × rate)
+      L5  = O1 * O2                              — container freight base (rate × qty)
+      M5  = (K5 * 5%) + ((L5 * 95%) * 5%)       — insurance/handling
+      N5  = settings.customs_fee_kzt             — customs duty (configurable flat KZT)
+      O5  = ((L5 * 85%) + N5 + M5 + K5) * 16%  — VAT on container
+      P5  = settings.terminal_fee_kzt
+      Q5  = settings.storage_fee_kzt
+      R5  = settings.broker_fee_kzt
+      S5  = settings.forwarder_fee_kzt
 
-    # Customs on total container FOB value
-    customs_total_kzt = fob_total_kzt * customs_fee_rate
+      T5  = SUM(K5:S5)   — total container cost
+      U5  = T5 / E5      — unit cost
+      V5  = T5 - O5      — net container cost (ex-VAT)
 
-    # All flat KZT fees — used as-is, no conversion
-    all_fees_kzt = (
-        container_cost
-        + broker_fee
-        + terminal_fee
-        + storage_fee
-        + forwarder_fee
+    SELL_PRICE = U5 / (1 - margin) * vat
+    """
+    O1 = settings["exchange_rate"]       # manual internal procurement rate
+    O2 = qty_40hq                        # E5 / O2 are both qty_40hq
+
+    margin = settings["margin"]
+    vat    = settings["vat"]
+
+    # ── Excel columns ─────────────────────────────────────────────────────────
+
+    K5 = fob_price_usd * O1                          # FOB KZT per unit
+
+    L5 = O1 * O2                                     # container freight base
+
+    M5 = (K5 * 0.05) + ((L5 * 0.95) * 0.05)        # insurance/handling
+
+    N5 = settings["customs_fee_kzt"]                 # customs duty flat KZT
+
+    O5 = ((L5 * 0.85) + N5 + M5 + K5) * 0.16       # VAT on container
+
+    P5 = settings["terminal_fee_kzt"]
+    Q5 = settings["storage_fee_kzt"]
+    R5 = settings["broker_fee_kzt"]
+    S5 = settings["forwarder_fee_kzt"]
+
+    T5 = K5 + L5 + M5 + N5 + O5 + P5 + Q5 + R5 + S5   # SUM(K5:S5)
+
+    U5 = T5 / qty_40hq if qty_40hq > 0 else 0           # unit cost
+
+    V5 = T5 - O5                                          # net ex-VAT
+
+    SELL_PRICE = U5 / (1 - margin) * vat
+
+    # ── Internal debug log (not shown in UI) ──────────────────────────────────
+    logger.debug(
+        "PRICING DEBUG | FOB_USD=%.4f qty=%d | "
+        "K5(FOB_KZT)=%.2f | L5=%.2f | M5=%.2f | N5=%.2f | O5(VAT)=%.2f | "
+        "P5=%.2f | Q5=%.2f | R5=%.2f | S5=%.2f | "
+        "T5(TOTAL)=%.2f | U5(UNIT_COST)=%.2f | V5(NET)=%.2f | SELL=%.2f",
+        fob_price_usd, qty_40hq,
+        K5, L5, M5, N5, O5,
+        P5, Q5, R5, S5,
+        T5, U5, V5, SELL_PRICE,
     )
 
-    # TOTAL_CONTAINER_COST — full aggregation before any per-unit division
-    total_container_cost = fob_total_kzt + customs_total_kzt + all_fees_kzt
-
-    # ── Stage 2: per-unit division ────────────────────────────────────────────
-    unit_cost  = total_container_cost / qty_40hq if qty_40hq > 0 else 0
-    sell_price = unit_cost / (1 - margin) * vat
-
-    # ── Display breakdown (computed after total, not before) ──────────────────
-    fob_unit_kzt       = fob_total_kzt / qty_40hq if qty_40hq > 0 else 0
-    customs_per_unit   = customs_total_kzt / qty_40hq if qty_40hq > 0 else 0
-    logistics_per_unit = all_fees_kzt / qty_40hq if qty_40hq > 0 else 0
-
     return {
-        "fob_kzt":            round(fob_unit_kzt, 2),
-        "logistics_per_unit": round(logistics_per_unit, 2),
-        "customs_per_unit":   round(customs_per_unit, 2),
-        "unit_cost":          round(unit_cost, 2),
-        "sell_price":         round(sell_price, 2),
+        "fob_kzt":            round(K5, 2),
+        "L5":                 round(L5, 2),
+        "M5":                 round(M5, 2),
+        "N5":                 round(N5, 2),
+        "O5_vat":             round(O5, 2),
+        "logistics_per_unit": round((L5 + M5 + N5 + O5 + P5 + Q5 + R5 + S5) / qty_40hq if qty_40hq > 0 else 0, 2),
+        "customs_per_unit":   round(N5 / qty_40hq if qty_40hq > 0 else 0, 2),
+        "total_container":    round(T5, 2),
+        "unit_cost":          round(U5, 2),
+        "net_ex_vat":         round(V5, 2),
+        "sell_price":         round(SELL_PRICE, 2),
     }

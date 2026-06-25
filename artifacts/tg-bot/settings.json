@@ -2,10 +2,9 @@
   "margin": 0.59,
   "vat": 1.16,
   "exchange_rate": 500.0,
-  "container_cost": 1575000.0,
-  "customs_fee": 0.15,
-  "broker_fee": 105000.0,
-  "terminal_fee": 50000.0,
-  "storage_fee": 30000.0,
-  "forwarder_fee": 90000.0
+  "customs_fee_kzt": 23592,
+  "terminal_fee_kzt": 105000,
+  "storage_fee_kzt": 50000,
+  "broker_fee_kzt": 30000,
+  "forwarder_fee_kzt": 90000
 }

@@ -10,6 +10,11 @@ class ProductState(IntEnum):
     NOTE = auto()
 
 
+class SpeedState(IntEnum):
+    PHOTO = auto()
+    DATA = auto()
+
+
 class SettingsState(IntEnum):
     CHOOSING = auto()
     EDITING = auto()

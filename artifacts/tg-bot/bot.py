@@ -18,10 +18,10 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from states import ProductState, SettingsState, ContextState
+from states import ProductState, SpeedState, SettingsState, ContextState
 from pricing import load_settings, save_settings
 from formatters import format_product_card, format_settings
-from context_store import load_user_context, save_user_context
+from context_store import load_user_context, save_user_context, set_speed_mode
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -45,25 +45,32 @@ SETTINGS_KEYS = [
 FACTORY_OPTIONS = ["DHZ", "WNQ", "Matrix OEM", "Johnson clone", "Другое (ввести)"]
 EXHIBITION_OPTIONS = ["CF26", "FIBO26", "TaiSPO26", "IWF26", "Другое (ввести)"]
 
+SPEED_BTN_OFF = "⚡ Speed Mode"
+SPEED_BTN_ON  = "⚡ Speed: ВКЛ ✓"
+
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
-def _main_keyboard(active_factory: str, active_exhibition: str) -> ReplyKeyboardMarkup:
+def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
+    speed_btn = SPEED_BTN_ON if ctx["speed_mode"] else SPEED_BTN_OFF
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton("➕ Новый товар")],
             [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
+            [KeyboardButton(speed_btn)],
             [KeyboardButton("⚙️ Настройки")],
         ],
         resize_keyboard=True,
     )
 
 
-def _main_menu_text(active_factory: str, active_exhibition: str) -> str:
+def _main_menu_text(ctx: dict) -> str:
+    mode_line = "⚡ <b>Режим: СКОРОСТЬ</b>" if ctx["speed_mode"] else "🔄 Режим: обычный"
     return (
         "👋 <b>Бот учёта товаров с выставки</b>\n\n"
-        f"🎪 Активная выставка: <b>{active_exhibition}</b>\n"
-        f"🏭 Активная фабрика: <b>{active_factory}</b>\n\n"
+        f"🎪 Активная выставка: <b>{ctx['active_exhibition']}</b>\n"
+        f"🏭 Активная фабрика: <b>{ctx['active_factory']}</b>\n"
+        f"{mode_line}\n\n"
         "Нажмите <b>«➕ Новый товар»</b> чтобы добавить позицию."
     )
 
@@ -74,13 +81,51 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     ctx = load_user_context(user_id)
     await update.message.reply_text(
-        _main_menu_text(ctx["active_factory"], ctx["active_exhibition"]),
+        _main_menu_text(ctx),
         parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx["active_factory"], ctx["active_exhibition"]),
+        reply_markup=_main_keyboard(ctx),
     )
 
 
-# ─── Product conversation ───────────────────────────────────────────────────
+# ─── Speed mode toggle ──────────────────────────────────────────────────────
+
+async def speed_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    set_speed_mode(user_id, True)
+    ctx = load_user_context(user_id)
+    await update.message.reply_text(
+        "⚡ <b>Speed Mode включён!</b>\n\n"
+        "После фото отправьте одно сообщение:\n"
+        "<code>Артикул/SKU\n"
+        "FOB цена (USD)\n"
+        "40HQ кол-во\n"
+        "Заметка (необязательно)</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_main_keyboard(ctx),
+    )
+
+
+async def speed_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    set_speed_mode(user_id, False)
+    ctx = load_user_context(user_id)
+    await update.message.reply_text(
+        "🔄 <b>Normal Mode включён.</b>\n\nВозвращаемся к пошаговому вводу.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_main_keyboard(ctx),
+    )
+
+
+async def speed_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    ctx = load_user_context(user_id)
+    if ctx["speed_mode"]:
+        await speed_off(update, context)
+    else:
+        await speed_on(update, context)
+
+
+# ─── Product conversation (normal mode) ────────────────────────────────────
 
 async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
@@ -88,6 +133,17 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data.clear()
     context.user_data["factory"] = ctx["active_factory"]
     context.user_data["exhibition"] = ctx["active_exhibition"]
+
+    if ctx["speed_mode"]:
+        await update.message.reply_text(
+            f"⚡ <b>SPEED MODE — Шаг 1/2 — Фото</b>\n\n"
+            f"Фабрика: <b>{ctx['active_factory']}</b> | Выставка: <b>{ctx['active_exhibition']}</b>\n\n"
+            "Пришлите фото или /skip:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return SpeedState.PHOTO
+
     await update.message.reply_text(
         f"📸 <b>Шаг 1/6 — Фото товара</b>\n\n"
         f"Фабрика: <b>{ctx['active_factory']}</b> | Выставка: <b>{ctx['active_exhibition']}</b>\n\n"
@@ -97,6 +153,8 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     )
     return ProductState.PHOTO
 
+
+# Normal flow handlers ───────────────────────────────────────────────────────
 
 async def product_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.photo:
@@ -187,6 +245,91 @@ async def product_skip_note(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return await finish_product(update, context)
 
 
+# Speed flow handlers ────────────────────────────────────────────────────────
+
+async def speed_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message.photo:
+        context.user_data["photo_file_id"] = update.message.photo[-1].file_id
+    else:
+        context.user_data["photo_file_id"] = None
+    await update.message.reply_text(
+        "⚡ <b>Шаг 2/2 — Данные товара</b>\n\n"
+        "Отправьте одним сообщением:\n"
+        "<code>Артикул/SKU\n"
+        "FOB цена (USD)\n"
+        "40HQ кол-во\n"
+        "Заметка (необязательно)</code>",
+        parse_mode=ParseMode.HTML,
+    )
+    return SpeedState.DATA
+
+
+async def speed_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["photo_file_id"] = None
+    await update.message.reply_text(
+        "⚡ <b>Шаг 2/2 — Данные товара</b>\n\n"
+        "Отправьте одним сообщением:\n"
+        "<code>Артикул/SKU\n"
+        "FOB цена (USD)\n"
+        "40HQ кол-во\n"
+        "Заметка (необязательно)</code>",
+        parse_mode=ParseMode.HTML,
+    )
+    return SpeedState.DATA
+
+
+async def speed_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    lines = [l.strip() for l in update.message.text.strip().splitlines() if l.strip()]
+
+    if len(lines) < 3:
+        await update.message.reply_text(
+            "⚠️ Нужно минимум 3 строки:\n"
+            "<code>Артикул/SKU\n"
+            "FOB цена\n"
+            "40HQ кол-во\n"
+            "Заметка (необязательно)</code>\n\n"
+            "Попробуйте снова:",
+            parse_mode=ParseMode.HTML,
+        )
+        return SpeedState.DATA
+
+    article = lines[0]
+
+    try:
+        price = float(lines[1].replace(",", "."))
+        if price <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            f"⚠️ Строка 2 — неверная цена: <code>{lines[1]}</code>\n\nПопробуйте снова:",
+            parse_mode=ParseMode.HTML,
+        )
+        return SpeedState.DATA
+
+    try:
+        qty = int(lines[2].replace(" ", ""))
+        if qty <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            f"⚠️ Строка 3 — неверное количество: <code>{lines[2]}</code>\n\nПопробуйте снова:",
+            parse_mode=ParseMode.HTML,
+        )
+        return SpeedState.DATA
+
+    note = lines[3] if len(lines) >= 4 else "—"
+
+    context.user_data["article"] = article
+    context.user_data["category"] = "—"
+    context.user_data["price"] = price
+    context.user_data["qty_40hq"] = qty
+    context.user_data["note"] = note
+
+    return await finish_product(update, context)
+
+
+# Shared finish ──────────────────────────────────────────────────────────────
+
 async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = context.user_data
     settings = load_settings()
@@ -194,7 +337,7 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     user_id = update.effective_user.id
     ctx = load_user_context(user_id)
-    reply_markup = _main_keyboard(ctx["active_factory"], ctx["active_exhibition"])
+    reply_markup = _main_keyboard(ctx)
 
     if data.get("photo_file_id"):
         await update.message.reply_photo(
@@ -218,7 +361,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ctx = load_user_context(user_id)
     await update.message.reply_text(
         "❌ Ввод отменён.",
-        reply_markup=_main_keyboard(ctx["active_factory"], ctx["active_exhibition"]),
+        reply_markup=_main_keyboard(ctx),
     )
     return ConversationHandler.END
 
@@ -259,7 +402,7 @@ async def factory_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(
         f"✅ Фабрика установлена: <b>{text}</b>",
         parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx["active_factory"], ctx["active_exhibition"]),
+        reply_markup=_main_keyboard(ctx),
     )
     return ConversationHandler.END
 
@@ -273,7 +416,7 @@ async def factory_custom(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(
         f"✅ Фабрика установлена: <b>{text}</b>",
         parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx["active_factory"], ctx["active_exhibition"]),
+        reply_markup=_main_keyboard(ctx),
     )
     return ConversationHandler.END
 
@@ -314,7 +457,7 @@ async def exhibition_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(
         f"✅ Выставка установлена: <b>{text}</b>",
         parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx["active_factory"], ctx["active_exhibition"]),
+        reply_markup=_main_keyboard(ctx),
     )
     return ConversationHandler.END
 
@@ -328,7 +471,7 @@ async def exhibition_custom(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(
         f"✅ Выставка установлена: <b>{text}</b>",
         parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx["active_factory"], ctx["active_exhibition"]),
+        reply_markup=_main_keyboard(ctx),
     )
     return ConversationHandler.END
 
@@ -361,7 +504,7 @@ async def settings_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         ctx = load_user_context(user_id)
         await update.message.reply_text(
             "✅ Настройки сохранены.",
-            reply_markup=_main_keyboard(ctx["active_factory"], ctx["active_exhibition"]),
+            reply_markup=_main_keyboard(ctx),
         )
         return ConversationHandler.END
 
@@ -427,6 +570,7 @@ def main() -> None:
     product_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Новый товар$"), product_start)],
         states={
+            # Normal mode states
             ProductState.PHOTO: [
                 MessageHandler(filters.PHOTO, product_photo),
                 CommandHandler("skip", product_skip_photo),
@@ -447,6 +591,15 @@ def main() -> None:
             ProductState.NOTE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, product_note),
                 CommandHandler("skip", product_skip_note),
+            ],
+            # Speed mode states
+            SpeedState.PHOTO: [
+                MessageHandler(filters.PHOTO, speed_photo),
+                CommandHandler("skip", speed_skip_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, speed_photo),
+            ],
+            SpeedState.DATA: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, speed_data)
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -501,7 +654,12 @@ def main() -> None:
         allow_reentry=True,
     )
 
+    speed_filter = filters.Regex(f"^({SPEED_BTN_OFF}|{SPEED_BTN_ON})$")
+
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("speed", speed_on))
+    app.add_handler(CommandHandler("normal", speed_off))
+    app.add_handler(MessageHandler(speed_filter, speed_toggle))
     app.add_handler(factory_conv)
     app.add_handler(exhibition_conv)
     app.add_handler(product_conv)

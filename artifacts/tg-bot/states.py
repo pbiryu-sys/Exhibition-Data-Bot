@@ -3,7 +3,6 @@ from enum import IntEnum, auto
 
 class ProductState(IntEnum):
     PHOTO = auto()
-    FACTORY = auto()
     CATEGORY = auto()
     ARTICLE = auto()
     PRICE = auto()
@@ -14,3 +13,10 @@ class ProductState(IntEnum):
 class SettingsState(IntEnum):
     CHOOSING = auto()
     EDITING = auto()
+
+
+class ContextState(IntEnum):
+    FACTORY_CHOOSE = auto()
+    FACTORY_CUSTOM = auto()
+    EXHIBITION_CHOOSE = auto()
+    EXHIBITION_CUSTOM = auto()

@@ -11,14 +11,18 @@ def format_product_card(data: dict, settings: dict) -> str:
 
     year = datetime.now().year
     factory = data["factory"]
+    exhibition = data.get("exhibition", "")
     category = data["category"]
     article = data["article"]
     note = data.get("note", "—")
+
+    tag = f"{factory} | {exhibition}" if exhibition else factory
 
     lines = [
         f"📦 <b>{category} | {article}</b>",
         "",
         f"🏭 Фабрика: <b>{factory}</b>",
+        f"🎪 Выставка: <b>{exhibition}</b>",
         f"📅 Год: {year}",
         "",
         f"💵 FOB цена: <b>${data['price']:.2f}</b>",
@@ -37,7 +41,7 @@ def format_product_card(data: dict, settings: dict) -> str:
         "",
         f"📝 Заметка: {note}",
         "",
-        f"🔗 Тег: #{factory.replace(' ', '_')}_{year}",
+        f"🔗 Тег: {tag}",
     ]
 
     return "\n".join(lines)

@@ -23,7 +23,7 @@ from telegram.constants import ParseMode
 
 from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState
 from pricing import load_settings, save_settings, calculate_cost_per_unit
-from formatters import format_product_card, format_settings
+from formatters import format_product_card, format_card_from_db, format_settings
 from context_store import (
     load_user_context, save_user_context, clear_user_context,
     get_factories, add_factory, delete_factory,
@@ -331,24 +331,13 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         saved = save_product(product_record, created_by=user_id)
         saved_id = saved["id"]
 
-    edit_btn = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{saved_id}")]]
+    await _reply(update,
+        card_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{saved_id}")]]
+        ),
     )
-
-    if data.get("photo_file_id"):
-        await _reply_photo(update,
-            photo=data["photo_file_id"],
-            caption=card_text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=edit_btn,
-        )
-    else:
-        await _reply(update,
-            card_text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=edit_btn,
-        )
-
     return ConversationHandler.END
 
 
@@ -755,8 +744,24 @@ async def _xp_edit(
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("_xp_edit failed: %s", e)
+
+
+def _card_markup(pid: str) -> InlineKeyboardMarkup:
+    """Single 'Edit' button for a finished product card."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{pid}")]]
+    )
+
+
+async def _restore_card(context: ContextTypes.DEFAULT_TYPE, pid: str) -> None:
+    """Load product from DB, rebuild full card, update the panel message in-place."""
+    p = get_product(pid)
+    if not p:
+        return
+    settings = load_settings()
+    await _xp_edit(context, format_card_from_db(p, settings), _card_markup(pid))
 
 
 async def edit_by_id_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -886,10 +891,8 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         factories = get_factories()
         if 0 <= idx < len(factories):
             update_product(pid, {"factory": factories[idx]}, updated_by=user_id)
-        p = get_product(pid)
-        if p:
-            await query.edit_message_text(_xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid))
-        return EditPanelState.IDLE
+        await _restore_card(context, pid)
+        return ConversationHandler.END
 
     if data.startswith("xp_finput:"):
         await query.edit_message_text(
@@ -921,10 +924,8 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         exhibitions = get_exhibitions()
         if 0 <= idx < len(exhibitions):
             update_product(pid, {"exhibition": exhibition_display(exhibitions[idx])}, updated_by=user_id)
-        p = get_product(pid)
-        if p:
-            await query.edit_message_text(_xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid))
-        return EditPanelState.IDLE
+        await _restore_card(context, pid)
+        return ConversationHandler.END
 
     if data.startswith("xp_einput:"):
         await query.edit_message_text(
@@ -940,7 +941,7 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return EditPanelState.IDLE
 
     if data.startswith("xp_done:"):
-        await query.edit_message_text("✅ Редактирование завершено.")
+        await _restore_card(context, pid)
         return ConversationHandler.END
 
     return EditPanelState.IDLE
@@ -951,10 +952,8 @@ async def _xp_receive_attachment(
 ) -> int:
     pid = context.user_data.get("_xp_pid", "")
     add_attachment(pid, attachment)
-    p = get_product(pid)
-    if p:
-        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
-    return EditPanelState.IDLE
+    await _restore_card(context, pid)
+    return ConversationHandler.END
 
 
 async def edit_panel_recv_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -995,10 +994,8 @@ async def edit_panel_recv_cat(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     cat     = update.message.text.strip()
     update_product(pid, {"category": cat}, updated_by=user_id)
-    p = get_product(pid)
-    if p:
-        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
-    return EditPanelState.IDLE
+    await _restore_card(context, pid)
+    return ConversationHandler.END
 
 
 async def edit_panel_recv_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1020,9 +1017,8 @@ async def edit_panel_recv_price(update: Update, context: ContextTypes.DEFAULT_TY
         settings = load_settings()
         calc     = calculate_cost_per_unit(fob_usd, p.get("qty_40hq", 1), settings)
         update_product(pid, {"fob_usd": fob_usd, "kz_price": calc["G5"]}, updated_by=user_id)
-        p = get_product(pid)
-        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
-    return EditPanelState.IDLE
+    await _restore_card(context, pid)
+    return ConversationHandler.END
 
 
 async def edit_panel_recv_factory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1030,10 +1026,8 @@ async def edit_panel_recv_factory(update: Update, context: ContextTypes.DEFAULT_
     user_id = update.effective_user.id
     factory = update.message.text.strip()
     update_product(pid, {"factory": factory}, updated_by=user_id)
-    p = get_product(pid)
-    if p:
-        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
-    return EditPanelState.IDLE
+    await _restore_card(context, pid)
+    return ConversationHandler.END
 
 
 async def edit_panel_recv_exh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1041,10 +1035,8 @@ async def edit_panel_recv_exh(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     exh     = update.message.text.strip()
     update_product(pid, {"exhibition": exh}, updated_by=user_id)
-    p = get_product(pid)
-    if p:
-        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
-    return EditPanelState.IDLE
+    await _restore_card(context, pid)
+    return ConversationHandler.END
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────

@@ -78,5 +78,29 @@
     "exhibition": " CSS27",
     "note": "Тпдвлат",
     "photo_file_id": null
+  },
+  {
+    "id": "170a9f59-34cc-4d94-93e0-84e3f94233d4",
+    "created_by": 348641645,
+    "created_at": 1782467185.2175653,
+    "updated_by": null,
+    "updated_at": null,
+    "sku": "Оклада",
+    "category": "Велотренажер",
+    "fob_usd": 1000.0,
+    "qty_40hq": 675,
+    "kz_price": 1499130.63,
+    "factory": "Lijiujia",
+    "exhibition": "CF26",
+    "note": "Опладад",
+    "photo_file_id": null,
+    "attachments": [
+      {
+        "type": "video",
+        "file_id": "BAACAgIAAxkBAAIB-Wo-StpmE3eflDPTu4atdeotU1nFAAJSmAACV6zwSVexZI0qTJW1PAQ",
+        "timestamp": "2026-06-26T09:48",
+        "added_by": 348641645
+      }
+    ]
   }
 ]

@@ -326,5 +326,32 @@
     ],
     "text_message_id": 610,
     "card_chat_id": 348641645
+  },
+  {
+    "id": "10a7ac9e-fb5d-412a-ad68-c75a1f574a84",
+    "created_by": 348641645,
+    "created_at": 1782471482.1445549,
+    "updated_by": 348641645,
+    "updated_at": 1782471482.7598848,
+    "sku": "АТМ0001",
+    "category": "Велотренажер",
+    "fob_usd": 10.0,
+    "qty_40hq": 675,
+    "kz_price": 30923.5,
+    "factory": "Lijiujia",
+    "exhibition": "CF 2026",
+    "note": "Брать",
+    "hero_media": [
+      {
+        "type": "photo",
+        "file_id": "AgACAgIAAxkBAAICcmo-WyfVPfjP8gABBm0xTTeUtSTTQgAC7hhrG1es8EnlyRZS83n-hQEAAwIAA3kAAzwE",
+        "timestamp": "2026-06-26T10:58"
+      }
+    ],
+    "media_message_ids": [
+      629
+    ],
+    "text_message_id": 630,
+    "card_chat_id": 348641645
   }
 ]

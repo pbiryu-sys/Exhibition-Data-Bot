@@ -22,19 +22,19 @@ def format_product_card(data: dict, settings: dict) -> str:
             f"INPUT_STATE_MISMATCH: _input_fob={_input_fob} != data['price']={data['price']}"
         )
 
-    year       = datetime.now().year
     factory    = data["factory"]
     exhibition = data.get("exhibition", "")
     category   = data["category"]
     article    = data["article"]
     note       = data.get("note", "—")
+    added      = datetime.now().strftime("%d.%m.%Y")
 
     lines = [
         f"📦 <b>{category} | {article}</b>",
         "",
         f"🏭 {factory}",
         f"🎪 {exhibition}",
-        f"📅 {year}",
+        f"🗓 Добавлено: {added}",
         "",
         f"💵 FOB: <b>${_input_fob:,.2f}</b>  ·  {_input_qty:,} шт / 40HQ",
         f"🚢 Контейнер: <b>${_input_fob * _input_qty:,.0f}</b>",
@@ -102,9 +102,9 @@ def format_card_from_db(p: dict, settings: dict) -> str:
     category   = p.get("category") or "—"
     article    = p.get("sku") or "—"
     note       = p.get("note") or "—"
-    year       = (
-        datetime.fromtimestamp(p["created_at"]).year
-        if p.get("created_at") else datetime.now().year
+    added = (
+        datetime.fromtimestamp(p["created_at"]).strftime("%d.%m.%Y")
+        if p.get("created_at") else datetime.now().strftime("%d.%m.%Y")
     )
     hero_media = p.get("hero_media") or []
 
@@ -113,7 +113,7 @@ def format_card_from_db(p: dict, settings: dict) -> str:
         "",
         f"🏭 {factory}",
         f"🎪 {exhibition}",
-        f"📅 {year}",
+        f"🗓 Добавлено: {added}",
         "",
         f"💵 FOB: <b>${fob_usd:,.2f}</b>  ·  {qty_40hq:,} шт / 40HQ",
         f"🚢 Контейнер: <b>${fob_usd * qty_40hq:,.0f}</b>",

@@ -34,6 +34,7 @@ SETTINGS_KEYS = [
     ("margin", "Маржа (напр. 0.59)"),
     ("vat", "НДС множитель (напр. 1.16)"),
     ("exchange_rate", "Курс USD/KZT (O1)"),
+    ("container_cost", "Контейнер USD (O2)"),
     ("customs_fee_kzt", "Таможня N5, ₸"),
     ("terminal_fee_kzt", "Терминал P5, ₸"),
     ("storage_fee_kzt", "Хранение Q5, ₸"),

@@ -23,11 +23,11 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
     Excel cell mapping:
       E5  = qty_40hq
       F5  = fob_price_usd
-      O1  = exchange_rate   (manual internal rate, USD→KZT)
-      O2  = qty_40hq        (same as E5, used in L5 formula)
+      O1  = exchange_rate        (manual internal rate, USD→KZT)
+      O2  = container_cost_usd  (freight cost per container in USD, from settings)
 
       K5  = F5 * O1                              — FOB in KZT (container total)
-      L5  = O1 * O2                              — container freight base (rate × qty)
+      L5  = O1 * O2                              — container freight in KZT (rate × container_cost_usd)
       M5  = (K5 * 5%) + ((L5 * 95%) * 5%)       — insurance/handling
       N5  = settings.customs_fee_kzt             — customs duty (configurable flat KZT)
       O5  = ((L5 * 85%) + N5 + M5 + K5) * 16%  — VAT on container
@@ -45,8 +45,8 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
             All validation must anchor to G5. T5/U5/V5 are cost-breakdown
             diagnostics only. G5_bot == G5_excel is the exact-match target.
     """
-    O1 = settings["exchange_rate"]       # manual internal procurement rate
-    O2 = qty_40hq                        # E5 / O2 are both qty_40hq
+    O1 = settings["exchange_rate"]       # manual internal procurement rate (USD→KZT)
+    O2 = settings["container_cost"]     # container freight cost in USD (Excel O2)
 
     margin = settings["margin"]
     vat    = settings["vat"]

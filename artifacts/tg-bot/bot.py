@@ -2411,6 +2411,40 @@ async def admin_panel_recv_remove(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
 
 
+# ─── Global error handler & fallback callback answerer ────────────────────────
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Catch ALL unhandled exceptions from any handler.
+    If the update has an unanswered callback_query, answer it immediately so
+    Telegram clears the loading spinner — otherwise the button stays frozen.
+    """
+    logger.exception("Unhandled exception in handler: %s", context.error)
+    if isinstance(update, Update) and update.callback_query:
+        try:
+            await update.callback_query.answer(
+                "⚠️ Произошла ошибка. Попробуйте ещё раз.", show_alert=False
+            )
+        except Exception:
+            pass  # query may already be answered — that is fine
+
+
+async def fallback_cb_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Silently acknowledge any callback_query NOT caught by a ConversationHandler.
+    This covers: old inline buttons on expired messages, wrong-state taps,
+    and any callback_data that no active conversation recognises.
+    Without this the Telegram spinner spins forever on those taps.
+    """
+    if update.callback_query:
+        try:
+            await update.callback_query.answer()
+        except Exception:
+            pass
+        logger.debug("fallback_cb_answer: acknowledged unhandled callback_data=%s",
+                     update.callback_query.data if update.callback_query else None)
+
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -2635,6 +2669,13 @@ def main() -> None:
     app.add_handler(exhibition_panel_conv)
     app.add_handler(product_conv)
     app.add_handler(settings_panel_conv)
+
+    # Global error handler — answers any unanswered callback_query on exception
+    app.add_error_handler(error_handler)
+
+    # Fallback: silently answer any callback_query not claimed by a ConversationHandler.
+    # group=99 ensures this runs AFTER all conversation handlers (groups 0..N).
+    app.add_handler(CallbackQueryHandler(fallback_cb_answer), group=99)
 
     logger.info("Bot started, polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

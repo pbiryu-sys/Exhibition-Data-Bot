@@ -33,3 +33,9 @@ class ExhibitionPanelState(IntEnum):
 class SettingsPanelState(IntEnum):
     IDLE    = auto()
     EDITING = auto()
+
+
+class AdminPanelState(IntEnum):
+    IDLE         = auto()
+    ADDING_USER  = auto()
+    REMOVING_USER = auto()

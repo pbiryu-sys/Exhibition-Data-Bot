@@ -1,94 +1,126 @@
 """
 Access control for the private Telegram bot.
 
+Storage: allowed_users.json  — list of {id, role} objects.
+Roles: "owner" | "manager"
+
 Lifecycle:
-  1. access.json starts with owner_id=null, allowed_users=[].
-  2. In this state is_allowed() returns True for everyone (setup mode).
-  3. First authorized person sends /setowner → they become owner and
-     are added to allowed_users.  From this point strict mode is active.
-  4. Owner uses /adduser and /removeuser to manage the allowlist.
+  1. File starts empty ([]) — setup mode; everyone passes.
+  2. First person sends /setowner → becomes owner, strict mode activates.
+  3. Owner uses /adduser / /removeuser or the inline admin panel.
+
+Auto-migration: if legacy access.json is found it is converted automatically.
 """
 import json
 import os
 
-ACCESS_PATH = os.path.join(os.path.dirname(__file__), "access.json")
+USERS_PATH  = os.path.join(os.path.dirname(__file__), "allowed_users.json")
+LEGACY_PATH = os.path.join(os.path.dirname(__file__), "access.json")
 
 
-def _load() -> dict:
-    if not os.path.exists(ACCESS_PATH):
-        data: dict = {"owner_id": None, "allowed_users": []}
-        _save(data)
-        return data
-    with open(ACCESS_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+# ── Internal I/O ─────────────────────────────────────────────────────────────
+
+def _load() -> list:
+    """Returns list of {id: int, role: str} dicts."""
+    if os.path.exists(USERS_PATH):
+        with open(USERS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    # Auto-migrate from legacy access.json
+    if os.path.exists(LEGACY_PATH):
+        with open(LEGACY_PATH, "r", encoding="utf-8") as f:
+            legacy = json.load(f)
+        owner_id = legacy.get("owner_id")
+        users = []
+        for uid in legacy.get("allowed_users", []):
+            users.append({"id": uid, "role": "owner" if uid == owner_id else "manager"})
+        _save(users)
+        return users
+    return []
 
 
-def _save(data: dict) -> None:
-    with open(ACCESS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+def _save(users: list) -> None:
+    with open(USERS_PATH, "w", encoding="utf-8") as f:
+        json.dump(users, f, indent=2, ensure_ascii=False)
 
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def is_setup_mode() -> bool:
-    """True while no users have been configured yet."""
-    return not _load().get("allowed_users")
+    """True while no users are configured — open bootstrap window."""
+    return len(_load()) == 0
 
 
 def is_allowed(user_id: int) -> bool:
-    """
-    Returns True if the user may use the bot.
-    In setup mode (empty list) everyone is allowed so the owner can bootstrap.
-    """
-    data = _load()
-    allowed = data.get("allowed_users", [])
-    if not allowed:
+    """True if user may use the bot. In setup mode everyone is allowed."""
+    users = _load()
+    if not users:
         return True
-    return user_id in allowed
+    return any(u["id"] == user_id for u in users)
 
 
 def get_owner_id() -> int | None:
-    return _load().get("owner_id")
+    for u in _load():
+        if u.get("role") == "owner":
+            return u["id"]
+    return None
 
 
 def is_owner(user_id: int) -> bool:
-    oid = get_owner_id()
-    return oid is not None and user_id == oid
+    return user_id == get_owner_id()
+
+
+def get_user_role(user_id: int) -> str | None:
+    for u in _load():
+        if u["id"] == user_id:
+            return u.get("role", "manager")
+    return None
 
 
 def set_owner(user_id: int) -> None:
-    data = _load()
-    data["owner_id"] = user_id
-    allowed = data.setdefault("allowed_users", [])
-    if user_id not in allowed:
-        allowed.append(user_id)
-    _save(data)
+    """Register the first owner; also adds them to allowed list."""
+    users = _load()
+    # Only one owner allowed — strip any existing owner role
+    for u in users:
+        if u.get("role") == "owner":
+            u["role"] = "manager"
+    existing = next((u for u in users if u["id"] == user_id), None)
+    if existing:
+        existing["role"] = "owner"
+    else:
+        users.insert(0, {"id": user_id, "role": "owner"})
+    _save(users)
 
 
-def add_user(user_id: int) -> bool:
-    """Add user to allowlist. Returns False if already present."""
-    data = _load()
-    allowed = data.setdefault("allowed_users", [])
-    if user_id in allowed:
+def add_user(user_id: int, role: str = "manager") -> bool:
+    """Add user with given role. Returns False if already present."""
+    users = _load()
+    if any(u["id"] == user_id for u in users):
         return False
-    allowed.append(user_id)
-    _save(data)
+    users.append({"id": user_id, "role": role})
+    _save(users)
     return True
 
 
 def remove_user(user_id: int) -> str:
     """
     Remove user from allowlist.
-    Returns 'ok', 'not_found', or 'is_owner'.
+    Returns 'ok' | 'not_found' | 'is_owner'.
     """
-    data = _load()
-    if user_id == data.get("owner_id"):
-        return "is_owner"
-    allowed = data.get("allowed_users", [])
-    if user_id not in allowed:
+    users = _load()
+    target = next((u for u in users if u["id"] == user_id), None)
+    if target is None:
         return "not_found"
-    data["allowed_users"] = [u for u in allowed if u != user_id]
-    _save(data)
+    if target.get("role") == "owner":
+        return "is_owner"
+    _save([u for u in users if u["id"] != user_id])
     return "ok"
 
 
 def list_users() -> list:
-    return _load().get("allowed_users", [])
+    """Returns list of plain user IDs."""
+    return [u["id"] for u in _load()]
+
+
+def list_users_with_roles() -> list:
+    """Returns full list of {id, role} dicts."""
+    return _load()

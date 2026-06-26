@@ -25,11 +25,11 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState
+from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState, AdminPanelState
 from access import (
     is_allowed, is_owner, is_setup_mode,
     get_owner_id, set_owner,
-    add_user, remove_user, list_users,
+    add_user, remove_user, list_users, list_users_with_roles,
 )
 from pricing import load_settings, save_settings, calculate_cost_per_unit
 from formatters import format_product_card, format_card_from_db, format_settings
@@ -116,9 +116,9 @@ async def cmd_setowner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         f"✅ Вы стали владельцем.\n"
         f"Ваш ID: <code>{uid}</code>\n\n"
-        "Добавьте коллег:\n<code>/adduser 123456789</code>",
+        "Используйте кнопку «👥 Админ» для управления пользователями.",
         parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(),
+        reply_markup=_main_keyboard(uid),
     )
 
 
@@ -253,15 +253,15 @@ SETTINGS_KEYS = [
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
-def _main_keyboard(ctx: dict = None) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("➕ Новый товар")],
-            [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
-            [KeyboardButton("⚙️ Настройки")],
-        ],
-        resize_keyboard=True,
-    )
+def _main_keyboard(user_id: int = None) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton("➕ Новый товар")],
+        [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
+        [KeyboardButton("⚙️ Настройки")],
+    ]
+    if user_id and is_owner(user_id):
+        rows.append([KeyboardButton("👥 Админ")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def _category_keyboard() -> ReplyKeyboardMarkup:
@@ -299,7 +299,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update,
         _main_menu_text(ctx),
         parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx),
+        reply_markup=_main_keyboard(user_id),
     )
 
 
@@ -315,7 +315,7 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "⚠️ Сначала укажите <b>фабрику</b> и <b>выставку</b>.\n\n"
             "Нажмите «🏭 Фабрика» и «🎪 Выставка» в меню.",
             parse_mode=ParseMode.HTML,
-            reply_markup=_main_keyboard(ctx),
+            reply_markup=_main_keyboard(user_id),
         )
         return ConversationHandler.END
 
@@ -324,7 +324,7 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "⚠️ Укажите <b>фабрику</b> перед добавлением товара.\n\n"
             "Нажмите «🏭 Фабрика» в меню.",
             parse_mode=ParseMode.HTML,
-            reply_markup=_main_keyboard(ctx),
+            reply_markup=_main_keyboard(user_id),
         )
         return ConversationHandler.END
 
@@ -333,7 +333,7 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "⚠️ Укажите <b>выставку</b> перед добавлением товара.\n\n"
             "Нажмите «🎪 Выставка» в меню.",
             parse_mode=ParseMode.HTML,
-            reply_markup=_main_keyboard(ctx),
+            reply_markup=_main_keyboard(user_id),
         )
         return ConversationHandler.END
 
@@ -528,14 +528,13 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await context.bot.send_message(
         chat_id=chat_id,
         text="✅ Товар сохранён.",
-        reply_markup=_main_keyboard(),
+        reply_markup=_main_keyboard(user_id),
     )
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
-    ctx = load_user_context(user_id)
     msg_id  = context.user_data.pop("_panel_msg_id",  None)
     chat_id = context.user_data.pop("_panel_chat_id", None)
     if msg_id and chat_id:
@@ -544,7 +543,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         except Exception:
             pass
     else:
-        await _reply(update, "❌ Ввод отменён.", reply_markup=_main_keyboard(ctx))
+        await _reply(update, "❌ Ввод отменён.", reply_markup=_main_keyboard(user_id))
     return ConversationHandler.END
 
 
@@ -1306,6 +1305,201 @@ async def edit_panel_recv_exh(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
+# ─── Admin panel ─────────────────────────────────────────────────────────────
+
+def _ap_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Список пользователей", callback_data="ap_list")],
+        [InlineKeyboardButton("➕ Добавить",             callback_data="ap_add"),
+         InlineKeyboardButton("❌ Удалить",              callback_data="ap_remove")],
+        [InlineKeyboardButton("📊 Статус системы",       callback_data="ap_status")],
+        [InlineKeyboardButton("🔙 Закрыть",              callback_data="ap_close")],
+    ])
+
+
+def _ap_text() -> str:
+    users = list_users_with_roles()
+    count = len(users)
+    owner = get_owner_id()
+    return (
+        f"👥 <b>Панель администратора</b>\n\n"
+        f"Пользователей: <b>{count}</b>\n"
+        f"Владелец: <code>{owner}</code>\n\n"
+        "Выберите действие:"
+    )
+
+
+async def admin_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    if not is_owner(uid):
+        await _reply(update, "⛔ Только владелец имеет доступ к панели.")
+        return ConversationHandler.END
+    msg = await _reply(update, _ap_text(), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard())
+    context.user_data["_ap_msg_id"]  = msg.message_id
+    context.user_data["_ap_chat_id"] = update.effective_chat.id
+    return AdminPanelState.IDLE
+
+
+async def admin_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query   = update.callback_query
+    await query.answer()
+    uid     = update.effective_user.id
+    data    = query.data
+    cancel_kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Отмена", callback_data="ap_back")]]
+    )
+
+    if data == "ap_list":
+        users = list_users_with_roles()
+        owner = get_owner_id()
+        if not users:
+            text = "📋 Список пуст — бот в режиме настройки."
+        else:
+            lines = ["📋 <b>Разрешённые пользователи:</b>", ""]
+            for u in users:
+                crown = " 👑" if u["id"] == owner else ""
+                role  = u.get("role", "manager")
+                lines.append(f"• <code>{u['id']}</code> — {role}{crown}")
+            text = "\n".join(lines)
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="ap_back")]]
+            ),
+        )
+        return AdminPanelState.IDLE
+
+    if data == "ap_add":
+        await query.edit_message_text(
+            "➕ <b>Добавить пользователя</b>\n\nОтправьте Telegram ID нового пользователя\n(они могут узнать его через /whoami):",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return AdminPanelState.ADDING_USER
+
+    if data == "ap_remove":
+        users = list_users_with_roles()
+        owner = get_owner_id()
+        if not users:
+            await query.edit_message_text(
+                "📋 Список пуст.", reply_markup=_ap_keyboard()
+            )
+            return AdminPanelState.IDLE
+        lines = ["❌ <b>Удалить пользователя</b>\n\nОтправьте ID для удаления:\n"]
+        for u in users:
+            if u["id"] != owner:
+                lines.append(f"• <code>{u['id']}</code> — {u.get('role','manager')}")
+        await query.edit_message_text(
+            "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return AdminPanelState.REMOVING_USER
+
+    if data == "ap_status":
+        settings = load_settings()
+        products = get_products()
+        n_products = len(products) if products else 0
+        owner = get_owner_id()
+        n_users = len(list_users_with_roles())
+        text = (
+            "📊 <b>Статус системы</b>\n\n"
+            f"👥 Пользователей: <b>{n_users}</b>\n"
+            f"👑 Владелец: <code>{owner}</code>\n"
+            f"📦 Товаров в каталоге: <b>{n_products}</b>\n\n"
+            f"⚙️ <b>Параметры цен:</b>\n"
+            f"• Курс USD/KZT: <b>{settings.get('exchange_rate', '—')}</b>\n"
+            f"• Маржа: <b>{int(settings.get('margin', 0)*100)}%</b>\n"
+            f"• НДС: <b>×{settings.get('vat', '—')}</b>"
+        )
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="ap_back")]]
+            ),
+        )
+        return AdminPanelState.IDLE
+
+    if data in ("ap_back", "ap_close"):
+        if data == "ap_close":
+            try:
+                await query.delete_message()
+            except Exception:
+                await query.edit_message_text(_ap_text(), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard())
+            return ConversationHandler.END
+        await query.edit_message_text(_ap_text(), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard())
+        return AdminPanelState.IDLE
+
+    return AdminPanelState.IDLE
+
+
+async def admin_panel_recv_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid = update.effective_user.id
+    text = update.message.text.strip()
+    try:
+        target = int(text)
+    except ValueError:
+        await update.message.reply_text("⚠️ Неверный ID — введите целое число:")
+        return AdminPanelState.ADDING_USER
+
+    added = add_user(target)
+    if added:
+        logger.info("Admin panel: user %d added by owner %d", target, uid)
+        await update.message.reply_text(
+            f"✅ Пользователь <code>{target}</code> добавлен.",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await update.message.reply_text(
+            f"ℹ️ Пользователь <code>{target}</code> уже есть в списке.",
+            parse_mode=ParseMode.HTML,
+        )
+    # Refresh panel
+    msg_id  = context.user_data.get("_ap_msg_id")
+    chat_id = context.user_data.get("_ap_chat_id")
+    if msg_id and chat_id:
+        try:
+            await context.bot.edit_message_text(
+                _ap_text(), chat_id=chat_id, message_id=msg_id,
+                parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(),
+            )
+        except Exception:
+            pass
+    return ConversationHandler.END
+
+
+async def admin_panel_recv_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    uid  = update.effective_user.id
+    text = update.message.text.strip()
+    try:
+        target = int(text)
+    except ValueError:
+        await update.message.reply_text("⚠️ Неверный ID — введите целое число:")
+        return AdminPanelState.REMOVING_USER
+
+    result = remove_user(target)
+    if result == "ok":
+        logger.info("Admin panel: user %d removed by owner %d", target, uid)
+        await update.message.reply_text(
+            f"✅ Пользователь <code>{target}</code> удалён.", parse_mode=ParseMode.HTML
+        )
+    elif result == "is_owner":
+        await update.message.reply_text("⛔ Нельзя удалить владельца.")
+    else:
+        await update.message.reply_text(
+            f"⚠️ Пользователь <code>{target}</code> не найден.", parse_mode=ParseMode.HTML
+        )
+    # Refresh panel
+    msg_id  = context.user_data.get("_ap_msg_id")
+    chat_id = context.user_data.get("_ap_chat_id")
+    if msg_id and chat_id:
+        try:
+            await context.bot.edit_message_text(
+                _ap_text(), chat_id=chat_id, message_id=msg_id,
+                parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(),
+            )
+        except Exception:
+            pass
+    return ConversationHandler.END
+
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1439,6 +1633,25 @@ def main() -> None:
         allow_reentry=True,
     )
 
+    admin_panel_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^👥 Админ$"), admin_panel_open)],
+        states={
+            AdminPanelState.IDLE: [
+                CallbackQueryHandler(admin_panel_cb, pattern=r"^ap_"),
+            ],
+            AdminPanelState.ADDING_USER: [
+                CallbackQueryHandler(admin_panel_cb, pattern=r"^ap_back$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_panel_recv_add),
+            ],
+            AdminPanelState.REMOVING_USER: [
+                CallbackQueryHandler(admin_panel_cb, pattern=r"^ap_back$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_panel_recv_remove),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
     # Access gate — must run before every other handler
     app.add_handler(TypeHandler(Update, access_gate), group=-1)
 
@@ -1450,6 +1663,7 @@ def main() -> None:
     app.add_handler(CommandHandler("users",      cmd_users))
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(admin_panel_conv)
     app.add_handler(edit_panel_conv)
     app.add_handler(factory_panel_conv)
     app.add_handler(exhibition_panel_conv)

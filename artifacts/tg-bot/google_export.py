@@ -13,8 +13,8 @@ import time
 import json
 import logging
 from io import BytesIO
-from pricing import load_settings, save_settings
 from datetime import datetime
+from pricing import load_settings, save_settings, calculate_cost_per_unit
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +41,12 @@ def _sa_json() -> dict | None:
     try:
         return json.loads(raw)
     except Exception as e:
-        logger.error("Invalid GOOGLE_SERVICE_ACCOUNT_JSON: %s", e)
+        logger.error("Invalid GOOGLE_SERVICE_ACCOUNT_JSON (JSON parse error): %s", e)
         return None
 
 
 def is_configured() -> bool:
-    """True when the service account secret is present."""
+    """True when the service account secret is present and parseable."""
     return _sa_json() is not None
 
 
@@ -55,15 +55,22 @@ def _creds():
     info = _sa_json()
     if not info:
         raise RuntimeError(
-            "GOOGLE_SERVICE_ACCOUNT_JSON secret is not set. "
-            "Add your service account JSON key in Replit Secrets."
+            "GOOGLE_SERVICE_ACCOUNT_JSON is not set or invalid. "
+            "Add the service account JSON key in Replit Secrets."
         )
     return Credentials.from_service_account_info(info, scopes=SCOPES)
 
 
 def _sheets_client():
+    """
+    gspread 6.x removed gspread.authorize().
+    Use service_account_from_dict() instead.
+    """
     import gspread
-    return gspread.authorize(_creds())
+    info = _sa_json()
+    if not info:
+        raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON is not set or invalid.")
+    return gspread.service_account_from_dict(info)
 
 
 def _drive_service():
@@ -85,13 +92,16 @@ def _ensure_folder(drive, name: str, parent_id: str | None = None) -> str:
     resp = drive.files().list(q=q, fields="files(id)").execute()
     hits = resp.get("files", [])
     if hits:
+        logger.debug("Drive folder found: %s (id=%s)", name, hits[0]["id"])
         return hits[0]["id"]
     meta: dict = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
     if parent_id:
         meta["parents"] = [parent_id]
     f = drive.files().create(body=meta, fields="id").execute()
-    _share_anyone(drive, f["id"])
-    return f["id"]
+    folder_id = f["id"]
+    logger.info("Drive folder created: %s (id=%s)", name, folder_id)
+    _share_anyone(drive, folder_id)
+    return folder_id
 
 
 def _share_anyone(drive, file_id: str) -> None:
@@ -114,7 +124,9 @@ def _upload_bytes(drive, data: bytes, name: str, mime: str, folder_id: str) -> s
         fields="id,webViewLink",
     ).execute()
     _share_anyone(drive, f["id"])
-    return f.get("webViewLink", "")
+    link = f.get("webViewLink", "")
+    logger.info("Drive upload OK: %s → %s", name, link)
+    return link
 
 
 async def _upload_tg_file(bot, file_id: str, file_name: str,
@@ -129,16 +141,33 @@ async def _upload_tg_file(bot, file_id: str, file_name: str,
 # ── Google Sheets helpers ──────────────────────────────────────────────────────
 
 def _open_or_create_sheet(gc, sheet_id: str | None):
+    """
+    Open by key if sheet_id is set; otherwise create a new sheet and
+    persist the new ID to settings.json immediately.
+    """
     if sheet_id:
         try:
-            return gc.open_by_key(sheet_id)
-        except Exception:
-            logger.warning("Cannot open sheet %s", sheet_id)
+            sh = gc.open_by_key(sheet_id)
+            logger.info("Opened existing sheet: %s (id=%s)", sh.title, sheet_id)
+            return sh
+        except Exception as e:
+            logger.error(
+                "Cannot open sheet by key %s: %s — will create a new one", sheet_id, e
+            )
+
+    # Create a fresh sheet
     sh = gc.create(SHEET_TAB_NAME)
-    settings = load_settings()
-    settings["google_sheet_id"] = sh.id
-    save_settings(settings)
-    sh.share("", perm_type="anyone", role="writer")
+    logger.info("Created new Google Sheet: %s (id=%s, url=%s)", sh.title, sh.id, sh.url)
+
+    # Persist the new sheet ID right away so we reuse it on all future exports
+    try:
+        s = load_settings()
+        s["google_sheet_id"] = sh.id
+        save_settings(s)
+        logger.info("Saved google_sheet_id=%s to settings.json", sh.id)
+    except Exception as e:
+        logger.error("Failed to persist google_sheet_id to settings.json: %s", e)
+
     return sh
 
 
@@ -147,13 +176,13 @@ def _worksheet(sh):
     ws.update_title(SHEET_TAB_NAME)
     if not ws.row_values(1):
         ws.append_row(SHEET_HEADERS, value_input_option="RAW")
+        logger.info("Sheet header row written")
     return ws
 
 
 def _append_row(product: dict, settings: dict,
                 photo_links: list, video_links: list, doc_links: list,
                 sheet_id: str | None) -> str:
-    from pricing import calculate_cost_per_unit
     gc = _sheets_client()
     sh = _open_or_create_sheet(gc, sheet_id)
     ws = _worksheet(sh)
@@ -164,7 +193,8 @@ def _append_row(product: dict, settings: dict,
         calc     = calculate_cost_per_unit(fob, qty, settings)
         cost_kzt = calc.get("unit_cost", 0)
         sell_kzt = calc.get("sell_price", 0)
-    except Exception:
+    except Exception as e:
+        logger.error("Pricing calc failed for product %s: %s", product.get("id"), e)
         cost_kzt = sell_kzt = 0
 
     ts = product.get("created_at")
@@ -186,15 +216,10 @@ def _append_row(product: dict, settings: dict,
         "\n".join(doc_links),
     ]
     ws.append_row(row, value_input_option="USER_ENTERED")
-
-    # Persist sheet ID so future exports reuse the same file
-    if not sheet_id:
-        try:
-            s = load_settings()
-            s["google_sheet_id"] = sh.id
-            save_settings(s)
-        except Exception:
-            pass
+    logger.info(
+        "Row appended to sheet %s — product=%s factory=%s sku=%s",
+        sh.id, product.get("id"), product.get("factory"), row[1],
+    )
 
     return sh.url
 
@@ -211,16 +236,18 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
       {"status": "ok", "sheet_url": ..., "folder_url": ...,
        "photos": N, "videos": N, "docs": N}
     or
-      {"status": "not_configured" | "drive_error" | "sheets_error",
-       "error": "..."}
+      {"status": "not_configured" | "drive_error" | "sheets_error", "error": "..."}
     """
     if not is_configured():
         logger.info("Google export skipped — GOOGLE_SERVICE_ACCOUNT_JSON not set")
         return {"status": "not_configured"}
 
+    pid     = product.get("id", "?")
     sku     = product.get("sku") or product.get("article") or product["id"][:8]
     factory = (product.get("factory") or "unknown").replace("/", "-")[:20]
     date    = datetime.now().strftime("%Y%m%d")
+
+    logger.info("Google export started — product=%s factory=%s sku=%s", pid, factory, sku)
 
     # ── Drive setup ────────────────────────────────────────────────────────────
     try:
@@ -237,6 +264,8 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
         return {"status": "drive_error", "error": str(e)}
 
     folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+    logger.info("Drive folder ready: %s", folder_url)
+
     photo_links: list[str] = []
     video_links: list[str] = []
     doc_links:   list[str] = []
@@ -257,7 +286,7 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
             link = await _upload_tg_file(bot, fid, fname, mime, folder_id, drive)
             (photo_links if ftype == "photo" else video_links).append(link)
         except Exception as e:
-            logger.warning("Hero media upload failed [%s]: %s", fname, e)
+            logger.error("Hero media upload FAILED [%s]: %s", fname, e)
 
     # ── Upload attached documents ──────────────────────────────────────────────
     for d in product.get("documents") or []:
@@ -276,7 +305,7 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
             link = await _upload_tg_file(bot, fid, fname, mime, folder_id, drive)
             doc_links.append(link)
         except Exception as e:
-            logger.warning("Doc upload failed [%s]: %s", fname, e)
+            logger.error("Doc upload FAILED [%s]: %s", fname, e)
 
     # ── Append Sheets row ──────────────────────────────────────────────────────
     sheet_id = settings.get("google_sheet_id") or None
@@ -285,12 +314,12 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
             product, settings, photo_links, video_links, doc_links, sheet_id
         )
     except Exception as e:
-        logger.error("Sheets append failed: %s", e)
+        logger.error("Sheets append FAILED for product=%s: %s", pid, e)
         return {"status": "sheets_error", "error": str(e), "folder_url": folder_url}
 
     logger.info(
-        "Google export OK — product=%s photos=%d videos=%d docs=%d",
-        product.get("id"), len(photo_links), len(video_links), len(doc_links),
+        "Google export COMPLETE — product=%s photos=%d videos=%d docs=%d sheet=%s",
+        pid, len(photo_links), len(video_links), len(doc_links), sheet_url,
     )
     return {
         "status":     "ok",

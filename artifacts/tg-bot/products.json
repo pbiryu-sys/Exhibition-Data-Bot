@@ -776,5 +776,24 @@
     "media_message_ids": [],
     "text_message_id": 902,
     "card_chat_id": 348641645
+  },
+  {
+    "id": "928cce65-d75c-4f18-b20e-b1c56852beb1",
+    "created_by": 348641645,
+    "created_at": 1782488123.52828,
+    "updated_by": 348641645,
+    "updated_at": 1782488126.5311337,
+    "sku": "Тест3",
+    "category": "Спин-байк",
+    "fob_usd": 100.0,
+    "qty_40hq": 700,
+    "kz_price": 161809.76,
+    "factory": "ZXCH",
+    "exhibition": "СSS 2027",
+    "note": "—",
+    "hero_media": [],
+    "media_message_ids": [],
+    "text_message_id": 917,
+    "card_chat_id": 348641645
   }
 ]

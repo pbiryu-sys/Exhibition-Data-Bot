@@ -1,0 +1,75 @@
+We have a broken Google Sheets + Google Drive export pipeline in a Telegram bot (Python, Replit).
+
+CURRENT ISSUE:
+Nothing appears in Google Sheets or Google Drive after creating products or triggering export.
+
+We already have:
+- Google Service Account JSON stored in Replit Secrets (GOOGLE_SERVICE_ACCOUNT_JSON)
+- Code for Sheets + Drive integration exists
+- export_product() is called after product creation
+
+BUT:
+- No spreadsheet is created in Google Drive
+- No rows are appended to Google Sheets
+- No visible errors in UI (likely silent failures)
+
+GOAL:
+Make Google Sheets + Drive export fully working and reliable.
+
+EXPECTED BEHAVIOR:
+1. On first export:
+   - Create Google Spreadsheet named "Products"
+   - Save spreadsheet ID permanently (settings.json or persistent storage)
+2. On every export:
+   - Append product row into the SAME spreadsheet
+3. Create Google Drive folder:
+   - "Exhibition Bot"
+   - Upload all media (photos/videos/docs)
+4. Return sheet_url + folder_url from export_product()
+
+WHAT MUST BE FIXED:
+
+1. REMOVE SILENT FAILURES
+   - Replace all `except Exception: pass` with proper logging
+   - Ensure errors are visible in logs
+
+2. FIX SHEET CREATION LOGIC
+   - Sheet must ONLY be created if sheet_id does not exist
+   - DO NOT rely on gc.open(SHEET_TAB_NAME)
+   - ALWAYS prefer gc.open_by_key(sheet_id)
+
+3. FIX SETTINGS PERSISTENCE
+   - When sheet is created:
+     settings["google_sheet_id"] = sheet.id
+     save_settings(settings)
+   - Ensure save_settings actually persists data
+
+4. VERIFY EXPORT FLOW
+   - export_product() MUST call _append_row()
+   - _append_row must never fail silently
+   - must return sheet_url
+
+5. VERIFY GOOGLE AUTH
+   - Ensure GOOGLE_SERVICE_ACCOUNT_JSON is parsed correctly
+   - Ensure credentials are valid and used in both:
+     - gspread client
+     - googleapiclient drive service
+
+6. ADD LOGGING
+   Add logs for:
+   - Sheet creation
+   - Sheet opening
+   - Row append success/failure
+   - Drive upload success/failure
+
+7. DEBUG CHECK
+   After fixes:
+   - Create test product
+   - Confirm spreadsheet appears in Google Drive
+   - Confirm row is appended
+   - Confirm folder "Exhibition Bot" exists
+
+IMPORTANT:
+Do NOT rewrite architecture.
+Only fix bugs in existing Google export pipeline.
+Make it deterministic and reliable.

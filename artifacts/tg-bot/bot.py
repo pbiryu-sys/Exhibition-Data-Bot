@@ -359,9 +359,10 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         sent_group = await context.bot.send_media_group(chat_id=chat_id, media=group)
         new_media_ids = [msg.message_id for msg in sent_group]
 
-    # --- Send text card body below album ---
-    sent_text = await update.message.reply_text(
-        card_text, parse_mode=ParseMode.HTML, reply_markup=markup,
+    # --- Send text card body immediately after album (no reply-thread arrow) ---
+    sent_text = await context.bot.send_message(
+        chat_id=chat_id, text=card_text,
+        parse_mode=ParseMode.HTML, reply_markup=markup,
     )
 
     update_product(saved_id, {

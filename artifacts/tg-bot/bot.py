@@ -14,16 +14,23 @@ from telegram import (
 )
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CommandHandler,
     MessageHandler,
     ConversationHandler,
     CallbackQueryHandler,
+    TypeHandler,
     filters,
     ContextTypes,
 )
 from telegram.constants import ParseMode
 
 from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState
+from access import (
+    is_allowed, is_owner, is_setup_mode,
+    get_owner_id, set_owner,
+    add_user, remove_user, list_users,
+)
 from pricing import load_settings, save_settings, calculate_cost_per_unit
 from formatters import format_product_card, format_card_from_db, format_settings
 from context_store import (
@@ -42,6 +49,153 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
+
+
+# ─── Access gate (group=-1, runs before ALL other handlers) ──────────────────
+
+# Commands exempt from access control — always reachable
+_EXEMPT_COMMANDS = {"/whoami", "/setowner"}
+
+async def access_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Blocks any update from a non-allowed user.
+    Raises ApplicationHandlerStop to prevent downstream handlers from running.
+    Exempt: /whoami and /setowner (needed for bootstrap).
+    """
+    user = update.effective_user
+    user_id = user.id if user else None
+
+    # Let exempt commands through regardless of access
+    msg = update.effective_message
+    if msg and msg.text:
+        cmd = msg.text.strip().split()[0].lower().split("@")[0]
+        if cmd in _EXEMPT_COMMANDS:
+            return
+
+    if user_id is None or not is_allowed(user_id):
+        if update.callback_query:
+            try:
+                await update.callback_query.answer("⛔ Доступ запрещён.", show_alert=True)
+            except Exception:
+                pass
+        elif msg:
+            await msg.reply_text("⛔ Доступ запрещён.")
+        logger.info("ACCESS DENIED: user_id=%s", user_id)
+        raise ApplicationHandlerStop
+
+
+# ─── Access management commands ──────────────────────────────────────────────
+
+async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Always accessible — lets anyone discover their user_id for setup."""
+    uid  = update.effective_user.id
+    name = update.effective_user.full_name
+    lines = [f"👤 <b>{name}</b>", f"🔑 ID: <code>{uid}</code>", ""]
+    if is_setup_mode():
+        lines += [
+            "⚙️ Бот в режиме настройки (список пуст).",
+            "Отправьте /setowner чтобы стать владельцем.",
+        ]
+    elif is_owner(uid):
+        lines.append("👑 Вы владелец бота.")
+    elif is_allowed(uid):
+        lines.append("✅ Доступ разрешён.")
+    else:
+        lines.append("⛔ У вас нет доступа к этому боту.")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def cmd_setowner(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Claim ownership — only works when no owner is set yet."""
+    uid = update.effective_user.id
+    if get_owner_id() is not None:
+        await update.message.reply_text("⛔ Владелец уже задан. Обратитесь к текущему владельцу.")
+        return
+    set_owner(uid)
+    logger.info("Owner set: user_id=%d", uid)
+    await update.message.reply_text(
+        f"✅ Вы стали владельцем.\n"
+        f"Ваш ID: <code>{uid}</code>\n\n"
+        "Добавьте коллег:\n<code>/adduser 123456789</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_main_keyboard(),
+    )
+
+
+async def cmd_adduser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: add a user to the allowlist."""
+    uid = update.effective_user.id
+    if not is_owner(uid):
+        await update.message.reply_text("⛔ Только владелец может добавлять пользователей.")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: <code>/adduser 123456789</code>", parse_mode=ParseMode.HTML
+        )
+        return
+    try:
+        target = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("⚠️ Неверный ID — нужно целое число.")
+        return
+    if add_user(target):
+        logger.info("User added: %d by owner %d", target, uid)
+        await update.message.reply_text(
+            f"✅ Пользователь <code>{target}</code> добавлен.", parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text(
+            f"ℹ️ Пользователь <code>{target}</code> уже в списке.", parse_mode=ParseMode.HTML
+        )
+
+
+async def cmd_removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: remove a user from the allowlist."""
+    uid = update.effective_user.id
+    if not is_owner(uid):
+        await update.message.reply_text("⛔ Только владелец может удалять пользователей.")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: <code>/removeuser 123456789</code>", parse_mode=ParseMode.HTML
+        )
+        return
+    try:
+        target = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("⚠️ Неверный ID — нужно целое число.")
+        return
+    result = remove_user(target)
+    if result == "ok":
+        logger.info("User removed: %d by owner %d", target, uid)
+        await update.message.reply_text(
+            f"✅ Пользователь <code>{target}</code> удалён.", parse_mode=ParseMode.HTML
+        )
+    elif result == "is_owner":
+        await update.message.reply_text("⛔ Нельзя удалить владельца.")
+    else:
+        await update.message.reply_text(
+            f"⚠️ Пользователь <code>{target}</code> не найден.", parse_mode=ParseMode.HTML
+        )
+
+
+async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: list all allowed users."""
+    uid = update.effective_user.id
+    if not is_owner(uid):
+        await update.message.reply_text("⛔ Только владелец может просматривать список.")
+        return
+    users = list_users()
+    owner = get_owner_id()
+    if not users:
+        await update.message.reply_text("📋 Список пуст — бот в режиме настройки.")
+        return
+    lines = ["📋 <b>Разрешённые пользователи:</b>", ""]
+    for u in users:
+        crown = " 👑" if u == owner else ""
+        lines.append(f"• <code>{u}</code>{crown}")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
 
 # ─── Reply helpers ───────────────────────────────────────────────────────────
 
@@ -1284,6 +1438,16 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
     )
+
+    # Access gate — must run before every other handler
+    app.add_handler(TypeHandler(Update, access_gate), group=-1)
+
+    # Always-accessible access management
+    app.add_handler(CommandHandler("whoami",     whoami))
+    app.add_handler(CommandHandler("setowner",   cmd_setowner))
+    app.add_handler(CommandHandler("adduser",    cmd_adduser))
+    app.add_handler(CommandHandler("removeuser", cmd_removeuser))
+    app.add_handler(CommandHandler("users",      cmd_users))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(edit_panel_conv)

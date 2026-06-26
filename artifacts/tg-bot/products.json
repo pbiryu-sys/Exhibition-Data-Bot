@@ -589,5 +589,57 @@
     "media_message_ids": [],
     "text_message_id": 744,
     "card_chat_id": 348641645
+  },
+  {
+    "id": "ce102f62-c1d4-4203-a364-18a930dbe565",
+    "created_by": 348641645,
+    "created_at": 1782474762.8966892,
+    "updated_by": 348641645,
+    "updated_at": 1782474763.4092107,
+    "sku": "АТМ000",
+    "category": "Велотренажер",
+    "fob_usd": 143.0,
+    "qty_40hq": 987,
+    "kz_price": 221820.92,
+    "factory": "Lijiujia",
+    "exhibition": "CF 2026",
+    "note": "Подумать",
+    "hero_media": [],
+    "media_message_ids": [],
+    "text_message_id": 752,
+    "card_chat_id": 348641645
+  },
+  {
+    "id": "ab1d663f-4c78-4c4e-9e8a-bcef093ac65a",
+    "created_by": 348641645,
+    "created_at": 1782474854.83732,
+    "updated_by": 348641645,
+    "updated_at": 1782474922.7348244,
+    "sku": "АТМ000",
+    "category": "Велотренажер",
+    "fob_usd": 100.0,
+    "qty_40hq": 987,
+    "kz_price": 157950.19,
+    "factory": "ZXCH",
+    "exhibition": "СSS 2027",
+    "note": "Подумать",
+    "hero_media": [
+      {
+        "type": "photo",
+        "file_id": "AgACAgIAAxkBAAIC_2o-aH9-eQPRsZqVz1XxVZJyl1NoAAJbGWsbV6zwSSi-cCN4xTYcAQADAgADeQADPAQ",
+        "timestamp": "2026-06-26T11:54"
+      },
+      {
+        "type": "video",
+        "file_id": "BAACAgIAAxkBAAICJmo-UXmoy-_YapYUmECQQmKp4KTXAAK7mAACV6zwSSlhJXLRtW2IPAQ",
+        "timestamp": "2026-06-26T11:54"
+      }
+    ],
+    "media_message_ids": [
+      771,
+      772
+    ],
+    "text_message_id": 773,
+    "card_chat_id": 348641645
   }
 ]

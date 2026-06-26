@@ -3,11 +3,8 @@ from enum import IntEnum, auto
 
 class ProductState(IntEnum):
     PHOTO = auto()
-    CATEGORY = auto()
-    ARTICLE = auto()
-    PRICE = auto()
-    QTY_40HQ = auto()
-    NOTE = auto()
+    DATA = auto()           # receive all fields in one multiline message
+    CATEGORY_PICK = auto()  # shown when category is not in allowed list
 
 
 class SettingsState(IntEnum):

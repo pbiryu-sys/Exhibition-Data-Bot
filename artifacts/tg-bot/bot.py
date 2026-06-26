@@ -34,6 +34,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+ALLOWED_CATEGORIES = [
+    "Беговая дорожка",
+    "Велотренажер",
+    "Спин-байк",
+    "Эллиптический тренажер",
+    "Гребной тренажер",
+    "Степпер",
+    "Виброплатформа",
+    "Пилатес",
+    "Мини-тренажеры",
+    "Силовые тренажеры",
+    "Мультистанции",
+    "Силовое оборудование",
+    "Другое",
+]
+
+DATA_PROMPT = (
+    "📋 <b>Введите данные товара одним сообщением:</b>\n\n"
+    "<code>Артикул\n"
+    "Категория\n"
+    "FOB цена\n"
+    "Кол-во 40HQ\n"
+    "Заметка (опционально)</code>\n\n"
+    "Пример:\n"
+    "<code>TM-500\n"
+    "Беговая дорожка\n"
+    "85.50\n"
+    "200\n"
+    "Хорошее качество</code>"
+)
+
 SETTINGS_KEYS = [
     ("margin", "Маржа (напр. 0.59)"),
     ("vat", "НДС множитель (напр. 1.16)"),
@@ -59,6 +90,20 @@ def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
+
+
+def _category_keyboard() -> ReplyKeyboardMarkup:
+    buttons = []
+    row = []
+    for cat in ALLOWED_CATEGORIES[:-1]:
+        row.append(KeyboardButton(cat))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([KeyboardButton(ALLOWED_CATEGORIES[-1])])  # "Другое" alone
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 
 def _main_menu_text(ctx: dict) -> str:
@@ -140,7 +185,7 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data["exhibition"] = ctx["active_exhibition"]
 
     await update.message.reply_text(
-        f"📸 <b>Шаг 1/6 — Фото товара</b>\n\n"
+        f"📸 <b>Шаг 1/2 — Фото товара</b>\n\n"
         f"Фабрика: <b>{ctx['active_factory']}</b> | Выставка: <b>{ctx['active_exhibition']}</b>\n\n"
         "Пришлите фото или нажмите /skip чтобы пропустить.",
         parse_mode=ParseMode.HTML,
@@ -157,86 +202,101 @@ async def product_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     else:
         context.user_data["photo_file_id"] = None
     await update.message.reply_text(
-        "📂 <b>Шаг 2/6 — Категория</b>\n\nВведите категорию товара:",
+        f"📋 <b>Шаг 2/2 — Данные товара</b>\n\n{DATA_PROMPT}",
         parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardRemove(),
     )
-    return ProductState.CATEGORY
+    return ProductState.DATA
 
 
 async def product_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["photo_file_id"] = None
     await update.message.reply_text(
-        "📂 <b>Шаг 2/6 — Категория</b>\n\nВведите категорию товара:",
+        f"📋 <b>Шаг 2/2 — Данные товара</b>\n\n{DATA_PROMPT}",
         parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardRemove(),
     )
-    return ProductState.CATEGORY
+    return ProductState.DATA
 
 
-async def product_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["category"] = update.message.text.strip()
-    await update.message.reply_text(
-        "🔖 <b>Шаг 3/6 — Артикул</b>\n\nВведите артикул товара:",
-        parse_mode=ParseMode.HTML,
-    )
-    return ProductState.ARTICLE
+async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Parse multiline input: Article / Category / FOB price / Qty / Note(optional)."""
+    lines = [l.strip() for l in update.message.text.strip().splitlines() if l.strip()]
 
+    # Check required field count
+    if len(lines) < 4:
+        names = ["Артикул", "Категория", "FOB цена", "Кол-во 40HQ"]
+        missing = names[len(lines):]
+        await update.message.reply_text(
+            "⚠️ Не хватает полей:\n" + "\n".join(f"• {m}" for m in missing) +
+            "\n\nОтправьте данные снова, все поля в одном сообщении.",
+            parse_mode=ParseMode.HTML,
+        )
+        return ProductState.DATA
 
-async def product_article(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["article"] = update.message.text.strip()
-    await update.message.reply_text(
-        "💵 <b>Шаг 4/6 — Цена FOB (USD)</b>\n\nВведите цену в долларах (напр. <code>12.50</code>):",
-        parse_mode=ParseMode.HTML,
-    )
-    return ProductState.PRICE
+    article  = lines[0]
+    category = lines[1]
+    fob_raw  = lines[2]
+    qty_raw  = lines[3]
+    note     = " ".join(lines[4:]) if len(lines) > 4 else "—"
 
-
-async def product_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Validate FOB price
     try:
-        price = float(update.message.text.replace(",", ".").strip())
+        price = float(fob_raw.replace(",", ".").replace(" ", ""))
         if price <= 0:
             raise ValueError
-        context.user_data["price"] = price
     except ValueError:
         await update.message.reply_text(
-            "⚠️ Введите корректное число больше 0, например <code>12.50</code>",
+            f"⚠️ Неверная FOB цена: <code>{fob_raw}</code>\n\n"
+            "Введите число больше 0, например <code>85.50</code>\n\nОтправьте данные снова.",
             parse_mode=ParseMode.HTML,
         )
-        return ProductState.PRICE
+        return ProductState.DATA
 
-    await update.message.reply_text(
-        "📦 <b>Шаг 5/6 — Количество в 40HQ</b>\n\nСколько единиц товара помещается в контейнер 40HQ?",
-        parse_mode=ParseMode.HTML,
-    )
-    return ProductState.QTY_40HQ
-
-
-async def product_qty(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Validate qty
     try:
-        qty = int(update.message.text.replace(" ", "").strip())
+        qty = int(qty_raw.replace(" ", "").replace(",", ""))
         if qty <= 0:
             raise ValueError
-        context.user_data["qty_40hq"] = qty
     except ValueError:
         await update.message.reply_text(
-            "⚠️ Введите целое число больше 0, например <code>500</code>",
+            f"⚠️ Неверное количество: <code>{qty_raw}</code>\n\n"
+            "Введите целое число больше 0, например <code>500</code>\n\nОтправьте данные снова.",
             parse_mode=ParseMode.HTML,
         )
-        return ProductState.QTY_40HQ
+        return ProductState.DATA
 
-    await update.message.reply_text(
-        "📝 <b>Шаг 6/6 — Заметка</b>\n\nДобавьте заметку или нажмите /skip:",
-        parse_mode=ParseMode.HTML,
-    )
-    return ProductState.NOTE
+    # Store validated numeric fields
+    context.user_data.update({
+        "article":  article,
+        "price":    price,
+        "qty_40hq": qty,
+        "note":     note,
+    })
 
+    # Validate category
+    if category not in ALLOWED_CATEGORIES:
+        await update.message.reply_text(
+            f"⚠️ Категория <b>{category}</b> не распознана.\n\nВыберите из списка:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_category_keyboard(),
+        )
+        return ProductState.CATEGORY_PICK
 
-async def product_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["note"] = update.message.text.strip()
+    context.user_data["category"] = category
     return await finish_product(update, context)
 
 
-async def product_skip_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["note"] = "—"
+async def product_category_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle category button selection when initial category was invalid."""
+    text = update.message.text.strip()
+    if text not in ALLOWED_CATEGORIES:
+        await update.message.reply_text(
+            "Пожалуйста, выберите категорию из кнопок ниже:",
+            reply_markup=_category_keyboard(),
+        )
+        return ProductState.CATEGORY_PICK
+    context.user_data["category"] = text
     return await finish_product(update, context)
 
 
@@ -812,27 +872,16 @@ def main() -> None:
     product_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Новый товар$"), product_start)],
         states={
-            # Normal mode states
             ProductState.PHOTO: [
                 MessageHandler(filters.PHOTO, product_photo),
                 CommandHandler("skip", product_skip_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, product_photo),
             ],
-            ProductState.CATEGORY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, product_category)
+            ProductState.DATA: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, product_data),
             ],
-            ProductState.ARTICLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, product_article)
-            ],
-            ProductState.PRICE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, product_price)
-            ],
-            ProductState.QTY_40HQ: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, product_qty)
-            ],
-            ProductState.NOTE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, product_note),
-                CommandHandler("skip", product_skip_note),
+            ProductState.CATEGORY_PICK: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, product_category_pick),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],

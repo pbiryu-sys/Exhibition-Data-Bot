@@ -101,7 +101,5 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
         "unit_cost":          round(U5, 2),
         "net_ex_vat":         round(V5, 2),
         "sell_price":         round(G5, 2),
-        "logistics_per_unit": round(
-            (L5 + M5 + N5 + O5 + P5 + Q5 + R5 + S5) / qty_40hq, 2
-        ) if qty_40hq > 0 else 0,
+        # P5–S5 are container-level constants — no per-unit division allowed
     }

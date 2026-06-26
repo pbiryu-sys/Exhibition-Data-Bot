@@ -50,7 +50,7 @@ def format_product_card(data: dict, settings: dict) -> str:
         "💰 <b>Расчёт стоимости (KZT)</b>",
         f"   Таможня N5:     {calc['N5']:,.0f} ₸",
         f"   НДС O5:         {calc['O5_vat']:,.0f} ₸",
-        f"   Прочие сборы:   {calc['logistics_per_unit']:,.0f} ₸/шт",
+        f"   Прочие сборы (P5–S5): {calc['P5']+calc['Q5']+calc['R5']+calc['S5']:,.0f} ₸",
         f"   T5 (итого контейнер): <b>{calc['total_container']:,.0f} ₸</b>",
         f"   Себестоимость U5: <b>{calc['unit_cost']:,.0f} ₸</b>",
         "━━━━━━━━━━━━━━━━━━━━",

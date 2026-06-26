@@ -38,6 +38,22 @@ logger = logging.getLogger(__name__)
 # Module-level list; populated in main() so clear_history can reset FSM state.
 _conv_handlers: list = []
 
+
+# ─── Tracked reply helpers ───────────────────────────────────────────────────
+# Every bot message goes through these so message IDs are registered for
+# bulk-deletion on "Clear History".
+
+async def _reply(update: Update, *args, **kwargs) -> "Message":
+    sent = await update.message.reply_text(*args, **kwargs)
+    add_message_id(update.effective_user.id, sent.message_id)
+    return sent
+
+
+async def _reply_photo(update: Update, *args, **kwargs) -> "Message":
+    sent = await update.message.reply_photo(*args, **kwargs)
+    add_message_id(update.effective_user.id, sent.message_id)
+    return sent
+
 ALLOWED_CATEGORIES = [
     "Беговая дорожка",
     "Велотренажер",
@@ -154,7 +170,7 @@ async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     context.user_data.clear()
     context.chat_data.clear()
 
-    await update.message.reply_text(
+    await _reply(update,
         "История полностью очищена. Нажмите /start",
     )
 
@@ -164,7 +180,7 @@ async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     ctx = load_user_context(user_id)
-    await update.message.reply_text(
+    await _reply(update,
         _main_menu_text(ctx),
         parse_mode=ParseMode.HTML,
         reply_markup=_main_keyboard(ctx),
@@ -179,7 +195,7 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     # Block entry if factory or exhibition not explicitly set
     if not ctx["active_factory"] and not ctx["active_exhibition"]:
-        await update.message.reply_text(
+        await _reply(update,
             "⚠️ Сначала укажите <b>фабрику</b> и <b>выставку</b>.\n\n"
             "Нажмите «🏭 Фабрика» и «🎪 Выставка» в меню.",
             parse_mode=ParseMode.HTML,
@@ -188,7 +204,7 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
     if not ctx["active_factory"]:
-        await update.message.reply_text(
+        await _reply(update,
             "⚠️ Укажите <b>фабрику</b> перед добавлением товара.\n\n"
             "Нажмите «🏭 Фабрика» в меню.",
             parse_mode=ParseMode.HTML,
@@ -197,7 +213,7 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
     if not ctx["active_exhibition"]:
-        await update.message.reply_text(
+        await _reply(update,
             "⚠️ Укажите <b>выставку</b> перед добавлением товара.\n\n"
             "Нажмите «🎪 Выставка» в меню.",
             parse_mode=ParseMode.HTML,
@@ -209,7 +225,7 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data["factory"] = ctx["active_factory"]
     context.user_data["exhibition"] = ctx["active_exhibition"]
 
-    await update.message.reply_text(
+    await _reply(update,
         f"📸 <b>Шаг 1/2 — Фото товара</b>\n\n"
         f"Фабрика: <b>{ctx['active_factory']}</b> | Выставка: <b>{ctx['active_exhibition']}</b>\n\n"
         "Пришлите фото или нажмите /skip чтобы пропустить.",
@@ -226,7 +242,7 @@ async def product_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.user_data["photo_file_id"] = update.message.photo[-1].file_id
     else:
         context.user_data["photo_file_id"] = None
-    await update.message.reply_text(
+    await _reply(update,
         f"📋 <b>Шаг 2/2 — Данные товара</b>\n\n{DATA_PROMPT}",
         parse_mode=ParseMode.HTML,
         reply_markup=ReplyKeyboardRemove(),
@@ -236,7 +252,7 @@ async def product_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def product_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["photo_file_id"] = None
-    await update.message.reply_text(
+    await _reply(update,
         f"📋 <b>Шаг 2/2 — Данные товара</b>\n\n{DATA_PROMPT}",
         parse_mode=ParseMode.HTML,
         reply_markup=ReplyKeyboardRemove(),
@@ -252,7 +268,7 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if len(lines) < 4:
         names = ["Артикул", "Категория", "FOB цена", "Кол-во 40HQ"]
         missing = names[len(lines):]
-        await update.message.reply_text(
+        await _reply(update,
             "⚠️ Не хватает полей:\n" + "\n".join(f"• {m}" for m in missing) +
             "\n\nОтправьте данные снова, все поля в одном сообщении.",
             parse_mode=ParseMode.HTML,
@@ -271,7 +287,7 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if price <= 0:
             raise ValueError
     except ValueError:
-        await update.message.reply_text(
+        await _reply(update,
             f"⚠️ Неверная FOB цена: <code>{fob_raw}</code>\n\n"
             "Введите число больше 0, например <code>85.50</code>\n\nОтправьте данные снова.",
             parse_mode=ParseMode.HTML,
@@ -284,7 +300,7 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if qty <= 0:
             raise ValueError
     except ValueError:
-        await update.message.reply_text(
+        await _reply(update,
             f"⚠️ Неверное количество: <code>{qty_raw}</code>\n\n"
             "Введите целое число больше 0, например <code>500</code>\n\nОтправьте данные снова.",
             parse_mode=ParseMode.HTML,
@@ -301,7 +317,7 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     # Validate category
     if category not in ALLOWED_CATEGORIES:
-        await update.message.reply_text(
+        await _reply(update,
             f"⚠️ Категория <b>{category}</b> не распознана.\n\nВыберите из списка:",
             parse_mode=ParseMode.HTML,
             reply_markup=_category_keyboard(),
@@ -316,7 +332,7 @@ async def product_category_pick(update: Update, context: ContextTypes.DEFAULT_TY
     """Handle category button selection when initial category was invalid."""
     text = update.message.text.strip()
     if text not in ALLOWED_CATEGORIES:
-        await update.message.reply_text(
+        await _reply(update,
             "Пожалуйста, выберите категорию из кнопок ниже:",
             reply_markup=_category_keyboard(),
         )
@@ -337,27 +353,26 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reply_markup = _main_keyboard(ctx)
 
     if data.get("photo_file_id"):
-        sent = await update.message.reply_photo(
+        sent = await _reply_photo(update,
             photo=data["photo_file_id"],
             caption=card_text,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup,
         )
     else:
-        sent = await update.message.reply_text(
+        sent = await _reply(update,
             card_text,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup,
         )
 
-    add_message_id(user_id, sent.message_id)
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     ctx = load_user_context(user_id)
-    await update.message.reply_text(
+    await _reply(update,
         "❌ Ввод отменён.",
         reply_markup=_main_keyboard(ctx),
     )
@@ -380,14 +395,14 @@ async def factory_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     factories = get_factories(user_id)
     current = ctx["active_factory"] or "не задана"
     if not factories:
-        await update.message.reply_text(
+        await _reply(update,
             f"🏭 <b>Выбор фабрики</b>\n\nСписок фабрик пуст.\n\n"
             "Используйте /factories чтобы добавить фабрику.",
             parse_mode=ParseMode.HTML,
             reply_markup=_main_keyboard(ctx),
         )
         return ConversationHandler.END
-    await update.message.reply_text(
+    await _reply(update,
         f"🏭 <b>Выбор фабрики</b>\n\nТекущая: <b>{current}</b>\n\nВыберите из списка:",
         parse_mode=ParseMode.HTML,
         reply_markup=_factory_select_keyboard(user_id),
@@ -401,11 +416,11 @@ async def factory_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if text == "❌ Отмена":
         ctx = load_user_context(user_id)
-        await update.message.reply_text("Отменено.", reply_markup=_main_keyboard(ctx))
+        await _reply(update,"Отменено.", reply_markup=_main_keyboard(ctx))
         return ConversationHandler.END
 
     if text == "➕ Добавить фабрику":
-        await update.message.reply_text(
+        await _reply(update,
             "✏️ Введите название фабрики:",
             reply_markup=ReplyKeyboardRemove(),
         )
@@ -416,14 +431,14 @@ async def factory_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ctx = load_user_context(user_id)
         save_user_context(user_id, text, ctx["active_exhibition"])
         ctx = load_user_context(user_id)
-        await update.message.reply_text(
+        await _reply(update,
             f"✅ Фабрика установлена: <b>{text}</b>",
             parse_mode=ParseMode.HTML,
             reply_markup=_main_keyboard(ctx),
         )
         return ConversationHandler.END
 
-    await update.message.reply_text(
+    await _reply(update,
         "Выберите фабрику из списка или нажмите «➕ Добавить фабрику».",
         reply_markup=_factory_select_keyboard(user_id),
     )
@@ -437,7 +452,7 @@ async def factory_custom(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ctx = load_user_context(user_id)
     save_user_context(user_id, text, ctx["active_exhibition"])
     ctx = load_user_context(user_id)
-    await update.message.reply_text(
+    await _reply(update,
         f"✅ Фабрика добавлена и установлена: <b>{text}</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=_main_keyboard(ctx),
@@ -459,7 +474,7 @@ def _factory_mgmt_keyboard() -> ReplyKeyboardMarkup:
 
 
 async def factories_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
+    await _reply(update,
         "🏭 <b>Управление фабриками</b>\n\nВыберите действие:",
         parse_mode=ParseMode.HTML,
         reply_markup=_factory_mgmt_keyboard(),
@@ -473,7 +488,7 @@ async def factories_menu_handle(update: Update, context: ContextTypes.DEFAULT_TY
 
     if text == "❌ Выход":
         ctx = load_user_context(user_id)
-        await update.message.reply_text("Готово.", reply_markup=_main_keyboard(ctx))
+        await _reply(update,"Готово.", reply_markup=_main_keyboard(ctx))
         return ConversationHandler.END
 
     if text == "📋 Список":
@@ -483,12 +498,12 @@ async def factories_menu_handle(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             lines = [f"{i+1}. {f}" for i, f in enumerate(factories)]
             msg = "🏭 <b>Ваши фабрики:</b>\n\n" + "\n".join(lines)
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML,
+        await _reply(update,msg, parse_mode=ParseMode.HTML,
                                         reply_markup=_factory_mgmt_keyboard())
         return FactoryMgmtState.MENU
 
     if text == "➕ Добавить фабрику":
-        await update.message.reply_text(
+        await _reply(update,
             "✏️ Введите название фабрики:",
             reply_markup=ReplyKeyboardRemove(),
         )
@@ -497,10 +512,10 @@ async def factories_menu_handle(update: Update, context: ContextTypes.DEFAULT_TY
     if text == "🗑 Удалить":
         factories = get_factories(user_id)
         if not factories:
-            await update.message.reply_text("Список пуст.", reply_markup=_factory_mgmt_keyboard())
+            await _reply(update,"Список пуст.", reply_markup=_factory_mgmt_keyboard())
             return FactoryMgmtState.MENU
         lines = [f"{i+1}. {f}" for i, f in enumerate(factories)]
-        await update.message.reply_text(
+        await _reply(update,
             "🗑 <b>Удалить фабрику</b>\n\n" + "\n".join(lines) +
             "\n\nВведите номер для удаления:",
             parse_mode=ParseMode.HTML,
@@ -508,7 +523,7 @@ async def factories_menu_handle(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return FactoryMgmtState.DELETE_CHOOSE
 
-    await update.message.reply_text("Выберите действие.", reply_markup=_factory_mgmt_keyboard())
+    await _reply(update,"Выберите действие.", reply_markup=_factory_mgmt_keyboard())
     return FactoryMgmtState.MENU
 
 
@@ -516,7 +531,7 @@ async def factories_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     name = update.message.text.strip()
     user_id = update.effective_user.id
     add_factory(user_id, name)
-    await update.message.reply_text(
+    await _reply(update,
         f"✅ Фабрика <b>{name}</b> добавлена.",
         parse_mode=ParseMode.HTML,
         reply_markup=_factory_mgmt_keyboard(),
@@ -529,19 +544,19 @@ async def factories_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         idx = int(update.message.text.strip()) - 1
     except ValueError:
-        await update.message.reply_text(
+        await _reply(update,
             "Введите номер из списка.", reply_markup=_factory_mgmt_keyboard()
         )
         return FactoryMgmtState.MENU
     removed = delete_factory(user_id, idx)
     if removed:
-        await update.message.reply_text(
+        await _reply(update,
             f"🗑 Фабрика <b>{removed}</b> удалена.",
             parse_mode=ParseMode.HTML,
             reply_markup=_factory_mgmt_keyboard(),
         )
     else:
-        await update.message.reply_text(
+        await _reply(update,
             "Неверный номер.", reply_markup=_factory_mgmt_keyboard()
         )
     return FactoryMgmtState.MENU
@@ -563,14 +578,14 @@ async def exhibition_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     exhibitions = get_exhibitions(user_id)
     current = ctx["active_exhibition"] or "не задана"
     if not exhibitions:
-        await update.message.reply_text(
+        await _reply(update,
             f"🎪 <b>Выбор выставки</b>\n\nСписок выставок пуст.\n\n"
             "Используйте /exhibitions чтобы добавить выставку.",
             parse_mode=ParseMode.HTML,
             reply_markup=_main_keyboard(ctx),
         )
         return ConversationHandler.END
-    await update.message.reply_text(
+    await _reply(update,
         f"🎪 <b>Выбор выставки</b>\n\nТекущая: <b>{current}</b>\n\nВыберите из списка:",
         parse_mode=ParseMode.HTML,
         reply_markup=_exhibition_select_keyboard(user_id),
@@ -584,11 +599,11 @@ async def exhibition_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if text == "❌ Отмена":
         ctx = load_user_context(user_id)
-        await update.message.reply_text("Отменено.", reply_markup=_main_keyboard(ctx))
+        await _reply(update,"Отменено.", reply_markup=_main_keyboard(ctx))
         return ConversationHandler.END
 
     if text == "➕ Добавить выставку":
-        await update.message.reply_text(
+        await _reply(update,
             "✏️ Введите название выставки (например: Canton Fair):",
             reply_markup=ReplyKeyboardRemove(),
         )
@@ -601,14 +616,14 @@ async def exhibition_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             ctx = load_user_context(user_id)
             save_user_context(user_id, ctx["active_factory"], text)
             ctx = load_user_context(user_id)
-            await update.message.reply_text(
+            await _reply(update,
                 f"✅ Выставка установлена: <b>{text}</b>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=_main_keyboard(ctx),
             )
             return ConversationHandler.END
 
-    await update.message.reply_text(
+    await _reply(update,
         "Выберите выставку из списка или нажмите «➕ Добавить выставку».",
         reply_markup=_exhibition_select_keyboard(user_id),
     )
@@ -619,7 +634,7 @@ async def exhibition_custom(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """Save exhibition name and ask for year."""
     name = update.message.text.strip()
     context.user_data["new_exhibition_name"] = name
-    await update.message.reply_text(
+    await _reply(update,
         f"📅 Введите год выставки (например: <code>2026</code>) или /skip чтобы пропустить:",
         parse_mode=ParseMode.HTML,
         reply_markup=ReplyKeyboardRemove(),
@@ -637,7 +652,7 @@ async def exhibition_custom_year(update: Update, context: ContextTypes.DEFAULT_T
     ctx = load_user_context(user_id)
     save_user_context(user_id, ctx["active_factory"], display)
     ctx = load_user_context(user_id)
-    await update.message.reply_text(
+    await _reply(update,
         f"✅ Выставка добавлена и установлена: <b>{display}</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=_main_keyboard(ctx),
@@ -654,7 +669,7 @@ async def exhibition_custom_skip_year(update: Update, context: ContextTypes.DEFA
     ctx = load_user_context(user_id)
     save_user_context(user_id, ctx["active_factory"], display)
     ctx = load_user_context(user_id)
-    await update.message.reply_text(
+    await _reply(update,
         f"✅ Выставка добавлена и установлена: <b>{display}</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=_main_keyboard(ctx),
@@ -676,7 +691,7 @@ def _exhibition_mgmt_keyboard() -> ReplyKeyboardMarkup:
 
 
 async def exhibitions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
+    await _reply(update,
         "🎪 <b>Управление выставками</b>\n\nВыберите действие:",
         parse_mode=ParseMode.HTML,
         reply_markup=_exhibition_mgmt_keyboard(),
@@ -690,7 +705,7 @@ async def exhibitions_menu_handle(update: Update, context: ContextTypes.DEFAULT_
 
     if text == "❌ Выход":
         ctx = load_user_context(user_id)
-        await update.message.reply_text("Готово.", reply_markup=_main_keyboard(ctx))
+        await _reply(update,"Готово.", reply_markup=_main_keyboard(ctx))
         return ConversationHandler.END
 
     if text == "📋 Список":
@@ -700,12 +715,12 @@ async def exhibitions_menu_handle(update: Update, context: ContextTypes.DEFAULT_
         else:
             lines = [f"{i+1}. {exhibition_display(ex)}" for i, ex in enumerate(exhibitions)]
             msg = "🎪 <b>Ваши выставки:</b>\n\n" + "\n".join(lines)
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML,
+        await _reply(update,msg, parse_mode=ParseMode.HTML,
                                         reply_markup=_exhibition_mgmt_keyboard())
         return ExhibitionMgmtState.MENU
 
     if text == "➕ Добавить выставку":
-        await update.message.reply_text(
+        await _reply(update,
             "✏️ Введите название выставки (например: Canton Fair):",
             reply_markup=ReplyKeyboardRemove(),
         )
@@ -714,10 +729,10 @@ async def exhibitions_menu_handle(update: Update, context: ContextTypes.DEFAULT_
     if text == "🗑 Удалить":
         exhibitions = get_exhibitions(user_id)
         if not exhibitions:
-            await update.message.reply_text("Список пуст.", reply_markup=_exhibition_mgmt_keyboard())
+            await _reply(update,"Список пуст.", reply_markup=_exhibition_mgmt_keyboard())
             return ExhibitionMgmtState.MENU
         lines = [f"{i+1}. {exhibition_display(ex)}" for i, ex in enumerate(exhibitions)]
-        await update.message.reply_text(
+        await _reply(update,
             "🗑 <b>Удалить выставку</b>\n\n" + "\n".join(lines) +
             "\n\nВведите номер для удаления:",
             parse_mode=ParseMode.HTML,
@@ -725,14 +740,14 @@ async def exhibitions_menu_handle(update: Update, context: ContextTypes.DEFAULT_
         )
         return ExhibitionMgmtState.DELETE_CHOOSE
 
-    await update.message.reply_text("Выберите действие.", reply_markup=_exhibition_mgmt_keyboard())
+    await _reply(update,"Выберите действие.", reply_markup=_exhibition_mgmt_keyboard())
     return ExhibitionMgmtState.MENU
 
 
 async def exhibitions_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     name = update.message.text.strip()
     context.user_data["new_exhibition_name"] = name
-    await update.message.reply_text(
+    await _reply(update,
         f"📅 Введите год выставки (например: <code>2026</code>) или /skip чтобы пропустить:",
         parse_mode=ParseMode.HTML,
         reply_markup=ReplyKeyboardRemove(),
@@ -745,7 +760,7 @@ async def exhibitions_add_year(update: Update, context: ContextTypes.DEFAULT_TYP
     name = context.user_data.get("new_exhibition_name", "")
     user_id = update.effective_user.id
     add_exhibition(user_id, name, year)
-    await update.message.reply_text(
+    await _reply(update,
         f"✅ Выставка <b>{exhibition_display({'name': name, 'year': year})}</b> добавлена.",
         parse_mode=ParseMode.HTML,
         reply_markup=_exhibition_mgmt_keyboard(),
@@ -757,7 +772,7 @@ async def exhibitions_add_year_skip(update: Update, context: ContextTypes.DEFAUL
     name = context.user_data.get("new_exhibition_name", "")
     user_id = update.effective_user.id
     add_exhibition(user_id, name, None)
-    await update.message.reply_text(
+    await _reply(update,
         f"✅ Выставка <b>{name}</b> добавлена.",
         parse_mode=ParseMode.HTML,
         reply_markup=_exhibition_mgmt_keyboard(),
@@ -770,19 +785,19 @@ async def exhibitions_delete(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         idx = int(update.message.text.strip()) - 1
     except ValueError:
-        await update.message.reply_text(
+        await _reply(update,
             "Введите номер из списка.", reply_markup=_exhibition_mgmt_keyboard()
         )
         return ExhibitionMgmtState.MENU
     removed = delete_exhibition(user_id, idx)
     if removed:
-        await update.message.reply_text(
+        await _reply(update,
             f"🗑 Выставка <b>{exhibition_display(removed)}</b> удалена.",
             parse_mode=ParseMode.HTML,
             reply_markup=_exhibition_mgmt_keyboard(),
         )
     else:
-        await update.message.reply_text(
+        await _reply(update,
             "Неверный номер.", reply_markup=_exhibition_mgmt_keyboard()
         )
     return ExhibitionMgmtState.MENU
@@ -800,7 +815,7 @@ def _settings_keyboard() -> ReplyKeyboardMarkup:
 
 async def settings_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     settings = load_settings()
-    await update.message.reply_text(
+    await _reply(update,
         format_settings(settings),
         parse_mode=ParseMode.HTML,
         reply_markup=_settings_keyboard(),
@@ -814,7 +829,7 @@ async def settings_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if text == "✅ Готово":
         user_id = update.effective_user.id
         ctx = load_user_context(user_id)
-        await update.message.reply_text(
+        await _reply(update,
             "✅ Настройки сохранены.",
             reply_markup=_main_keyboard(ctx),
         )
@@ -829,12 +844,12 @@ async def settings_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 settings["debug_mode"] = not bool(settings.get("debug_mode", False))
                 save_settings(settings)
                 state = "ВКЛ 🟢" if settings["debug_mode"] else "ВЫКЛ 🔴"
-                await update.message.reply_text(
+                await _reply(update,
                     f"✅ <b>Debug trace</b>: {state}",
                     parse_mode=ParseMode.HTML,
                     reply_markup=_settings_keyboard(),
                 )
-                await update.message.reply_text(
+                await _reply(update,
                     format_settings(settings), parse_mode=ParseMode.HTML
                 )
                 return SettingsState.CHOOSING
@@ -842,14 +857,14 @@ async def settings_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context.user_data["editing_key"] = key
             context.user_data["editing_label"] = label
             current = settings[key]
-            await update.message.reply_text(
+            await _reply(update,
                 f"✏️ <b>{label}</b>\n\nТекущее значение: <code>{current}</code>\n\nВведите новое значение:",
                 parse_mode=ParseMode.HTML,
                 reply_markup=ReplyKeyboardRemove(),
             )
             return SettingsState.EDITING
 
-    await update.message.reply_text("Выберите параметр из списка.", reply_markup=_settings_keyboard())
+    await _reply(update,"Выберите параметр из списка.", reply_markup=_settings_keyboard())
     return SettingsState.CHOOSING
 
 
@@ -860,7 +875,7 @@ async def settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     try:
         value = float(update.message.text.replace(",", ".").strip())
     except ValueError:
-        await update.message.reply_text(
+        await _reply(update,
             "⚠️ Введите число (напр. <code>0.59</code> или <code>90.0</code>).",
             parse_mode=ParseMode.HTML,
         )
@@ -870,14 +885,14 @@ async def settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     settings[key] = value
     save_settings(settings)
 
-    await update.message.reply_text(
+    await _reply(update,
         f"✅ <b>{label}</b> обновлено: <code>{value}</code>",
         parse_mode=ParseMode.HTML,
         reply_markup=_settings_keyboard(),
     )
 
     settings = load_settings()
-    await update.message.reply_text(
+    await _reply(update,
         format_settings(settings),
         parse_mode=ParseMode.HTML,
         reply_markup=_settings_keyboard(),

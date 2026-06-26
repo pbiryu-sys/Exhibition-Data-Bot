@@ -1,7 +1,12 @@
 {
   "348641645": {
     "factories": [
-      "Lijiujia"
+      "Lijiujia",
+      "Evertop",
+      "Yeekang",
+      "Dapao",
+      "RH Fitness",
+      "DDS"
     ],
     "exhibitions": [
       {
@@ -9,10 +14,14 @@
         "year": null
       }
     ],
-    "active_factory": "Lijiujia",
+    "active_factory": "DDS",
     "active_exhibition": "CF26",
     "message_ids": [
-      327
+      357,
+      359,
+      361,
+      363,
+      365
     ]
   }
 }

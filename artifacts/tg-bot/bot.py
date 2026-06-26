@@ -394,10 +394,30 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # Normal flow handlers ───────────────────────────────────────────────────────
 
 async def product_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.photo:
-        context.user_data["photo_file_id"] = update.message.photo[-1].file_id
+    msg = update.message
+    file_id: str | None = None
+
+    if msg.photo:
+        # Standard compressed photo
+        file_id = msg.photo[-1].file_id
+        logger.info("PHOTO RECEIVED (compressed) — file_id=%s", file_id)
+    elif msg.document and (msg.document.mime_type or "").startswith("image/"):
+        # Photo sent "as file" to preserve quality
+        file_id = msg.document.file_id
+        logger.info("PHOTO RECEIVED (as document/file) — file_id=%s mime=%s",
+                    file_id, msg.document.mime_type)
     else:
-        context.user_data["photo_file_id"] = None
+        logger.warning(
+            "product_photo called but no photo in message — "
+            "text=%r has_document=%s mime=%s",
+            msg.text,
+            bool(msg.document),
+            getattr(msg.document, "mime_type", None) if msg.document else None,
+        )
+
+    context.user_data["photo_file_id"] = file_id
+    logger.info("photo_file_id stored in user_data: %s", file_id)
+
     await _tracked_reply(update, context,
         f"📋 <b>Шаг 2/2 — Данные товара</b>\n\n{DATA_PROMPT}",
         parse_mode=ParseMode.HTML,
@@ -511,6 +531,15 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     calc = calculate_cost_per_unit(data["price"], data["qty_40hq"], settings)
     edit_pid = data.pop("_edit_product_id", None)
 
+    # Full data snapshot before save — every field visible in logs
+    logger.info(
+        "DATA BEFORE SAVE — factory=%r exhibition=%r article=%r category=%r "
+        "price=%s qty=%s photo_file_id=%s edit_pid=%s",
+        data.get("factory"), data.get("exhibition"), data.get("article"),
+        data.get("category"), data.get("price"), data.get("qty_40hq"),
+        data.get("photo_file_id"), edit_pid,
+    )
+
     # Build hero_media from the optional creation-flow photo
     hero_media: list = []
     if data.get("photo_file_id"):
@@ -519,6 +548,9 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "file_id": data["photo_file_id"],
             "timestamp": _dt.now().strftime("%Y-%m-%dT%H:%M"),
         }]
+        logger.info("hero_media built — 1 photo, file_id=%s", data["photo_file_id"])
+    else:
+        logger.info("hero_media is EMPTY — photo_file_id was %r", data.get("photo_file_id"))
 
     product_record = {
         "sku":        data["article"],
@@ -2314,6 +2346,7 @@ def main() -> None:
         states={
             ProductState.PHOTO: [
                 MessageHandler(filters.PHOTO, product_photo),
+                MessageHandler(filters.Document.IMAGE, product_photo),
                 CommandHandler("skip", product_skip_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, product_photo),
             ],

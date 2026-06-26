@@ -113,6 +113,33 @@ def delete_factory(index: int, deleted_by: int | None = None) -> str | None:
     return None
 
 
+# ─── Category list (global) ───────────────────────────────────────────────────
+
+def get_categories() -> list[str]:
+    return list(_load_shared().get("categories", []))
+
+
+def add_category(name: str, added_by: int | None = None) -> None:
+    shared     = _load_shared()
+    categories = shared.get("categories", [])
+    if name not in categories:
+        categories.append(name)
+    shared["categories"] = categories
+    _save_shared(shared)
+
+
+def delete_category(index: int, deleted_by: int | None = None) -> str | None:
+    """Delete category by 0-based index. Returns deleted name or None."""
+    shared     = _load_shared()
+    categories = shared.get("categories", [])
+    if 0 <= index < len(categories):
+        removed              = categories.pop(index)
+        shared["categories"] = categories
+        _save_shared(shared)
+        return removed
+    return None
+
+
 # ─── Exhibition list (global) ─────────────────────────────────────────────────
 
 def get_exhibitions() -> list[dict]:

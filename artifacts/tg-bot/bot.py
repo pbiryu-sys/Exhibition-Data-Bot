@@ -25,7 +25,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState, AdminPanelState, CatalogState
+from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState, AdminPanelState, CatalogState, CategoryPanelState
 from access import (
     is_allowed, is_owner, is_setup_mode,
     get_owner_id, set_owner,
@@ -36,6 +36,7 @@ from formatters import format_product_card, format_card_from_db, format_settings
 from context_store import (
     load_user_context, save_user_context, clear_user_context,
     get_factories, add_factory, delete_factory,
+    get_categories, add_category, delete_category,
     get_exhibitions, add_exhibition, delete_exhibition, exhibition_display,
 )
 from products import (
@@ -287,6 +288,7 @@ def _main_keyboard(user_id: int = None) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton("➕ Новый товар")],
         [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
+        [KeyboardButton("🏷 Категории")],
         [KeyboardButton(f"📦 Каталог ({count})")],
         [KeyboardButton("⚙️ Настройки")],
     ]
@@ -700,6 +702,87 @@ async def factory_panel_add_name(update: Update, context: ContextTypes.DEFAULT_T
     save_user_context(user_id, name, ctx["active_exhibition"])
     await _panel_edit(context, _fp_text(user_id), _fp_keyboard(user_id))
     return FactoryPanelState.IDLE
+
+
+# ─── Category panel ───────────────────────────────────────────────────────────
+
+def _cp_text() -> str:
+    cats = get_categories()
+    if not cats:
+        return "🏷 <b>Категории</b>\n\nСписок пуст. Добавьте первую категорию."
+    lines = ["🏷 <b>Категории</b>\n"]
+    for i, c in enumerate(cats):
+        lines.append(f"{i + 1}. {c}")
+    return "\n".join(lines)
+
+
+def _cp_keyboard() -> InlineKeyboardMarkup:
+    cats = get_categories()
+    rows = []
+    for i, c in enumerate(cats):
+        label = c[:28]
+        rows.append([
+            InlineKeyboardButton(f"🏷 {label}", callback_data=f"cp_noop"),
+            InlineKeyboardButton("🗑",          callback_data=f"cp_del:{i}"),
+        ])
+    rows.append([InlineKeyboardButton("➕ Добавить категорию", callback_data="cp_add")])
+    rows.append([InlineKeyboardButton("✖️ Закрыть",           callback_data="cp_done")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def category_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    sent = await update.message.reply_text(
+        _cp_text(), parse_mode=ParseMode.HTML, reply_markup=_cp_keyboard()
+    )
+    context.user_data["_panel_msg_id"]  = sent.message_id
+    context.user_data["_panel_chat_id"] = update.effective_chat.id
+    return CategoryPanelState.IDLE
+
+
+async def category_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    data  = query.data
+
+    if data == "cp_noop":
+        return CategoryPanelState.IDLE
+
+    if data.startswith("cp_del:"):
+        idx = int(data.split(":")[1])
+        delete_category(idx, deleted_by=update.effective_user.id)
+        await query.edit_message_text(
+            _cp_text(), parse_mode=ParseMode.HTML, reply_markup=_cp_keyboard()
+        )
+        return CategoryPanelState.IDLE
+
+    if data == "cp_add":
+        await query.edit_message_text(
+            "🏷 <b>Добавить категорию</b>\n\nВведите название:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data="cp_cadd")]]
+            ),
+        )
+        return CategoryPanelState.ADDING
+
+    if data == "cp_cadd":
+        await query.edit_message_text(
+            _cp_text(), parse_mode=ParseMode.HTML, reply_markup=_cp_keyboard()
+        )
+        return CategoryPanelState.IDLE
+
+    if data == "cp_done":
+        await query.edit_message_text("🏷 Категории сохранены.")
+        return ConversationHandler.END
+
+    return CategoryPanelState.IDLE
+
+
+async def category_panel_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    name = update.message.text.strip()
+    add_category(name, added_by=update.effective_user.id)
+    await _panel_edit(context, _cp_text(), _cp_keyboard())
+    return CategoryPanelState.IDLE
 
 
 # ─── Exhibition panel ─────────────────────────────────────────────────────────
@@ -1485,26 +1568,118 @@ async def edit_panel_recv_exh(update: Update, context: ContextTypes.DEFAULT_TYPE
 CATALOG_PAGE_SIZE = 10
 
 
-def _catalog_list_text(page: int, products: list) -> str:
-    total   = len(products)
-    pages   = max(1, (total + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE)
-    start   = page * CATALOG_PAGE_SIZE
-    end     = min(start + CATALOG_PAGE_SIZE, total)
+# ─── Catalog: filter helpers ─────────────────────────────────────────────────
+
+def _cat_filtered_products(user_data: dict) -> list:
+    ftype = user_data.get("cat_filter_type", "all")
+    fval  = user_data.get("cat_filter_value", "")
+    all_p = get_active_products()
+    if ftype == "factory":
+        return [p for p in all_p if p.get("factory", "") == fval]
+    if ftype == "category":
+        return [p for p in all_p if p.get("category", "") == fval]
+    if ftype == "search":
+        q = fval.lower()
+        return [
+            p for p in all_p
+            if any(
+                q in str(p.get(f, "")).lower()
+                for f in ("factory", "category", "sku", "article", "note", "exhibition")
+            )
+        ]
+    return all_p
+
+
+def _cat_filter_header(user_data: dict) -> str:
+    ftype = user_data.get("cat_filter_type", "all")
+    fval  = user_data.get("cat_filter_value", "")
+    if ftype == "factory":
+        return f"🏭 Фабрика: <b>{fval}</b>"
+    if ftype == "category":
+        return f"🏷 Категория: <b>{fval}</b>"
+    if ftype == "search":
+        return f"🔍 Поиск: <b>{fval}</b>"
+    return "📦 <b>Все товары</b>"
+
+
+# ─── Catalog: menu ────────────────────────────────────────────────────────────
+
+def _cat_menu_text() -> str:
+    total = count_active_products()
     return (
-        f"📦 <b>Каталог</b> — {total} позиций\n"
+        f"📦 <b>Каталог</b> — {total} позиций\n\n"
+        "Выберите способ просмотра:"
+    )
+
+
+def _cat_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏭 По фабрике",    callback_data="cat_facts")],
+        [InlineKeyboardButton("🏷 По категории",  callback_data="cat_cats")],
+        [InlineKeyboardButton("🔍 Поиск",         callback_data="cat_dosearch")],
+        [InlineKeyboardButton("📋 Все товары",    callback_data="cat_all")],
+        [InlineKeyboardButton("✖️ Закрыть",       callback_data="cat_close")],
+    ])
+
+
+# ─── Catalog: factory / category selection lists ──────────────────────────────
+
+def _cat_facts_text(factories: list) -> str:
+    if not factories:
+        return "🏭 <b>По фабрике</b>\n\nФабрик пока нет."
+    return f"🏭 <b>По фабрике</b>\n\n{len(factories)} фабрик в базе. Выберите:"
+
+
+def _cat_facts_keyboard(factories: list) -> InlineKeyboardMarkup:
+    rows = []
+    all_p = get_active_products()
+    for i, f in enumerate(factories):
+        count = sum(1 for p in all_p if p.get("factory", "") == f)
+        rows.append([InlineKeyboardButton(
+            f"🏭 {f[:30]}  ({count})", callback_data=f"cat_fact:{i}"
+        )])
+    rows.append([InlineKeyboardButton("🔙 Назад", callback_data="cat_menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _cat_cats_text(categories: list) -> str:
+    if not categories:
+        return "🏷 <b>По категории</b>\n\nКатегорий пока нет.\n\nДобавьте категории в разделе «🏷 Категории»."
+    return f"🏷 <b>По категории</b>\n\n{len(categories)} категорий. Выберите:"
+
+
+def _cat_cats_keyboard(categories: list) -> InlineKeyboardMarkup:
+    rows = []
+    all_p = get_active_products()
+    for i, c in enumerate(categories):
+        count = sum(1 for p in all_p if p.get("category", "") == c)
+        rows.append([InlineKeyboardButton(
+            f"🏷 {c[:30]}  ({count})", callback_data=f"cat_cat:{i}"
+        )])
+    rows.append([InlineKeyboardButton("🔙 Назад", callback_data="cat_menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+# ─── Catalog: filtered product list ──────────────────────────────────────────
+
+def _catalog_list_text(page: int, products: list, header: str = "") -> str:
+    total = len(products)
+    pages = max(1, (total + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE)
+    base  = header or "📦 <b>Все товары</b>"
+    return (
+        f"{base} — {total} позиций\n"
         f"Страница {page + 1}/{pages}\n\n"
         "Выберите товар для просмотра:"
     )
 
 
 def _catalog_list_keyboard(page: int, products: list) -> InlineKeyboardMarkup:
-    total  = len(products)
-    pages  = max(1, (total + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE)
-    start  = page * CATALOG_PAGE_SIZE
-    end    = min(start + CATALOG_PAGE_SIZE, total)
-    rows   = []
+    total = len(products)
+    pages = max(1, (total + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE)
+    start = page * CATALOG_PAGE_SIZE
+    rows  = []
 
-    for p in products[start:end]:
+    for p in products[start:start + CATALOG_PAGE_SIZE]:
         factory = p.get("factory", "—")[:12]
         sku     = p.get("sku") or p.get("article") or "—"
         fob     = p.get("fob_usd", 0)
@@ -1521,7 +1696,7 @@ def _catalog_list_keyboard(page: int, products: list) -> InlineKeyboardMarkup:
     if nav:
         rows.append(nav)
 
-    rows.append([InlineKeyboardButton("🔙 Закрыть", callback_data="cat_close")])
+    rows.append([InlineKeyboardButton("🔙 В меню", callback_data="cat_menu")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1537,10 +1712,9 @@ def _catalog_detail_text(p: dict, settings: dict) -> str:
     rate     = settings.get("exchange_rate", 1)
     created  = p.get("created_at")
     date_str = datetime.fromtimestamp(created).strftime("%d.%m.%Y") if created else "—"
-
     lines = [
         f"🏭 <b>{factory}</b>  🎪 {exh}",
-        f"📋 {category}  🆔 #{sku}",
+        f"🏷 {category}  🆔 #{sku}",
         f"💵 FOB: <b>${fob:.2f}</b>  ({fob * rate:,.0f}₸)",
         f"📦 40HQ: <b>{qty:,} шт</b>",
     ]
@@ -1566,19 +1740,21 @@ def _catalog_confirm_keyboard(pid: str) -> InlineKeyboardMarkup:
     ])
 
 
+# ─── Catalog: open & handlers ─────────────────────────────────────────────────
+
 async def catalog_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    products = get_active_products()
-    context.user_data["cat_page"] = 0
-    page = 0
+    context.user_data["cat_filter_type"]  = "all"
+    context.user_data["cat_filter_value"] = ""
+    context.user_data["cat_page"]         = 0
     msg = await _reply(
         update,
-        _catalog_list_text(page, products),
+        _cat_menu_text(),
         parse_mode=ParseMode.HTML,
-        reply_markup=_catalog_list_keyboard(page, products),
+        reply_markup=_cat_menu_keyboard(),
     )
     context.user_data["cat_msg_id"]  = msg.message_id
     context.user_data["cat_chat_id"] = update.effective_chat.id
-    return CatalogState.LIST
+    return CatalogState.MENU
 
 
 async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1588,19 +1764,97 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data     = query.data
     settings = load_settings()
 
-    # ── Pagination ───────────────────────────────────────────────────────
-    if data.startswith("cat_pg_"):
-        page     = int(data.split("_")[-1])
-        products = get_active_products()
-        context.user_data["cat_page"] = page
+    # ── Menu / navigation ────────────────────────────────────────────────
+    if data == "cat_menu":
         await query.edit_message_text(
-            _catalog_list_text(page, products),
+            _cat_menu_text(), parse_mode=ParseMode.HTML, reply_markup=_cat_menu_keyboard()
+        )
+        return CatalogState.MENU
+
+    if data == "cat_noop":
+        return CatalogState.LIST
+
+    if data == "cat_all":
+        context.user_data["cat_filter_type"]  = "all"
+        context.user_data["cat_filter_value"] = ""
+        context.user_data["cat_page"]         = 0
+        products = _cat_filtered_products(context.user_data)
+        await query.edit_message_text(
+            _catalog_list_text(0, products, _cat_filter_header(context.user_data)),
             parse_mode=ParseMode.HTML,
-            reply_markup=_catalog_list_keyboard(page, products),
+            reply_markup=_catalog_list_keyboard(0, products),
         )
         return CatalogState.LIST
 
-    if data == "cat_noop":
+    # ── Factory list ─────────────────────────────────────────────────────
+    if data == "cat_facts":
+        facts = get_factories()
+        await query.edit_message_text(
+            _cat_facts_text(facts), parse_mode=ParseMode.HTML,
+            reply_markup=_cat_facts_keyboard(facts),
+        )
+        return CatalogState.FACTORY_LIST
+
+    if data.startswith("cat_fact:"):
+        idx   = int(data.split(":")[1])
+        facts = get_factories()
+        name  = facts[idx] if 0 <= idx < len(facts) else ""
+        context.user_data["cat_filter_type"]  = "factory"
+        context.user_data["cat_filter_value"] = name
+        context.user_data["cat_page"]         = 0
+        products = _cat_filtered_products(context.user_data)
+        await query.edit_message_text(
+            _catalog_list_text(0, products, _cat_filter_header(context.user_data)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_list_keyboard(0, products),
+        )
+        return CatalogState.LIST
+
+    # ── Category list ─────────────────────────────────────────────────────
+    if data == "cat_cats":
+        cats = get_categories()
+        await query.edit_message_text(
+            _cat_cats_text(cats), parse_mode=ParseMode.HTML,
+            reply_markup=_cat_cats_keyboard(cats),
+        )
+        return CatalogState.CATEGORY_LIST
+
+    if data.startswith("cat_cat:"):
+        idx  = int(data.split(":")[1])
+        cats = get_categories()
+        name = cats[idx] if 0 <= idx < len(cats) else ""
+        context.user_data["cat_filter_type"]  = "category"
+        context.user_data["cat_filter_value"] = name
+        context.user_data["cat_page"]         = 0
+        products = _cat_filtered_products(context.user_data)
+        await query.edit_message_text(
+            _catalog_list_text(0, products, _cat_filter_header(context.user_data)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_list_keyboard(0, products),
+        )
+        return CatalogState.LIST
+
+    # ── Search prompt ─────────────────────────────────────────────────────
+    if data == "cat_dosearch":
+        await query.edit_message_text(
+            "🔍 <b>Поиск</b>\n\nВведите запрос (по артикулу, заводу, категории, заметке):",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data="cat_menu")]]
+            ),
+        )
+        return CatalogState.SEARCH
+
+    # ── Pagination ────────────────────────────────────────────────────────
+    if data.startswith("cat_pg_"):
+        page     = int(data.split("_")[-1])
+        context.user_data["cat_page"] = page
+        products = _cat_filtered_products(context.user_data)
+        await query.edit_message_text(
+            _catalog_list_text(page, products, _cat_filter_header(context.user_data)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_list_keyboard(page, products),
+        )
         return CatalogState.LIST
 
     # ── Open product detail ───────────────────────────────────────────────
@@ -1608,10 +1862,12 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         pid = data[len("cat_p_"):]
         p   = get_product(pid)
         if not p or p.get("status") == "deleted":
-            products = get_active_products()
+            products = _cat_filtered_products(context.user_data)
             page     = context.user_data.get("cat_page", 0)
             await query.edit_message_text(
-                "⚠️ Товар не найден.\n\n" + _catalog_list_text(page, products),
+                "⚠️ Товар не найден.\n\n" + _catalog_list_text(
+                    page, products, _cat_filter_header(context.user_data)
+                ),
                 parse_mode=ParseMode.HTML,
                 reply_markup=_catalog_list_keyboard(page, products),
             )
@@ -1624,18 +1880,18 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return CatalogState.DETAIL
 
-    # ── Back to list ─────────────────────────────────────────────────────
+    # ── Back to list ──────────────────────────────────────────────────────
     if data == "cat_back":
-        products = get_active_products()
+        products = _cat_filtered_products(context.user_data)
         page     = context.user_data.get("cat_page", 0)
         await query.edit_message_text(
-            _catalog_list_text(page, products),
+            _catalog_list_text(page, products, _cat_filter_header(context.user_data)),
             parse_mode=ParseMode.HTML,
             reply_markup=_catalog_list_keyboard(page, products),
         )
         return CatalogState.LIST
 
-    # ── View card inline ─────────────────────────────────────────────────
+    # ── View card inline ──────────────────────────────────────────────────
     if data.startswith("cat_view_"):
         pid = data[len("cat_view_"):]
         p   = get_product(pid)
@@ -1643,15 +1899,15 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return CatalogState.DETAIL
         card_text = format_card_from_db(p, settings)
         back_kb   = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Назад",           callback_data=f"cat_p_{pid}")],
-            [InlineKeyboardButton("✏️ Редактировать",   callback_data=f"edit_{pid}")],
+            [InlineKeyboardButton("🔙 Назад",         callback_data=f"cat_p_{pid}")],
+            [InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{pid}")],
         ])
         await query.edit_message_text(
             card_text, parse_mode=ParseMode.HTML, reply_markup=back_kb,
         )
         return CatalogState.DETAIL
 
-    # ── Delete prompt ────────────────────────────────────────────────────
+    # ── Delete prompt ─────────────────────────────────────────────────────
     if data.startswith("cat_del_"):
         pid = data[len("cat_del_"):]
         p   = get_product(pid)
@@ -1667,25 +1923,26 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return CatalogState.DELETE_CONFIRM
 
-    # ── Confirm delete ───────────────────────────────────────────────────
+    # ── Confirm delete ────────────────────────────────────────────────────
     if data.startswith("cat_delok_"):
         pid = data[len("cat_delok_"):]
         soft_delete_product(pid, uid)
         logger.info("Catalog: product %s soft-deleted by %d", pid, uid)
-        products = get_active_products()
+        products = _cat_filtered_products(context.user_data)
         page     = context.user_data.get("cat_page", 0)
-        # Clamp page if last product on page was deleted
         max_page = max(0, (len(products) - 1) // CATALOG_PAGE_SIZE)
         page     = min(page, max_page)
         context.user_data["cat_page"] = page
         await query.edit_message_text(
-            "✅ Товар удалён из каталога.\n\n" + _catalog_list_text(page, products),
+            "✅ Товар удалён.\n\n" + _catalog_list_text(
+                page, products, _cat_filter_header(context.user_data)
+            ),
             parse_mode=ParseMode.HTML,
             reply_markup=_catalog_list_keyboard(page, products),
         )
         return CatalogState.LIST
 
-    # ── Close ────────────────────────────────────────────────────────────
+    # ── Close ─────────────────────────────────────────────────────────────
     if data == "cat_close":
         try:
             await query.delete_message()
@@ -1693,6 +1950,38 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.edit_message_reply_markup(reply_markup=None)
         return ConversationHandler.END
 
+    return CatalogState.MENU
+
+
+async def catalog_search_recv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive search query text and show filtered product list."""
+    q = update.message.text.strip()
+    if not q:
+        await update.message.reply_text("⚠️ Введите текст для поиска:")
+        return CatalogState.SEARCH
+    context.user_data["cat_filter_type"]  = "search"
+    context.user_data["cat_filter_value"] = q
+    context.user_data["cat_page"]         = 0
+    products = _cat_filtered_products(context.user_data)
+
+    # Edit the existing panel message
+    chat_id = context.user_data.get("cat_chat_id")
+    msg_id  = context.user_data.get("cat_msg_id")
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=msg_id,
+            text=_catalog_list_text(0, products, _cat_filter_header(context.user_data)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_list_keyboard(0, products),
+        )
+    except Exception:
+        pass
+    # Delete user's search message silently
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
     return CatalogState.LIST
 
 
@@ -2110,15 +2399,42 @@ def main() -> None:
     app.add_handler(CommandHandler("removeuser", cmd_removeuser))
     app.add_handler(CommandHandler("users",      cmd_users))
 
+    category_panel_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^🏷 Категории$"), category_panel_open)],
+        states={
+            CategoryPanelState.IDLE: [
+                CallbackQueryHandler(category_panel_cb, pattern=r"^cp_"),
+            ],
+            CategoryPanelState.ADDING: [
+                CallbackQueryHandler(category_panel_cb, pattern=r"^cp_cadd$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, category_panel_add_name),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
     catalog_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex(r"^📦 Каталог"), catalog_open)],
         states={
+            CatalogState.MENU: [
+                CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
+            ],
+            CatalogState.FACTORY_LIST: [
+                CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
+            ],
+            CatalogState.CATEGORY_LIST: [
+                CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
+            ],
+            CatalogState.SEARCH: [
+                CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, catalog_search_recv),
+            ],
             CatalogState.LIST: [
                 CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
             ],
             CatalogState.DETAIL: [
                 CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
-                # edit_{pid} callbacks fall through to edit_panel_conv
             ],
             CatalogState.DELETE_CONFIRM: [
                 CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
@@ -2133,6 +2449,7 @@ def main() -> None:
     app.add_handler(catalog_conv)
     app.add_handler(edit_panel_conv)
     app.add_handler(factory_panel_conv)
+    app.add_handler(category_panel_conv)
     app.add_handler(exhibition_panel_conv)
     app.add_handler(product_conv)
     app.add_handler(settings_panel_conv)

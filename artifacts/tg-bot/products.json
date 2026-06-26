@@ -708,7 +708,7 @@
     "created_by": 348641645,
     "created_at": 1782478323.781588,
     "updated_by": 348641645,
-    "updated_at": 1782478324.374625,
+    "updated_at": 1782479172.7473645,
     "sku": "Собакен1",
     "category": "Другое",
     "fob_usd": 1000.0,
@@ -728,6 +728,15 @@
       850
     ],
     "text_message_id": 851,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "documents": [
+      {
+        "file_name": "Инструкция_Genau_Girex_color_27_05_26_INTERACTIVE.pdf",
+        "file_type": "application/pdf",
+        "telegram_file_id": "BQACAgIAAxkBAAIDV2o-eUTvVzQmywd9ly-k8FgBrmnEAAK2mgACV6zwSZriicyTwIP8PAQ",
+        "uploaded_by": 348641645,
+        "uploaded_at": 1782479172.747106
+      }
+    ]
   }
 ]

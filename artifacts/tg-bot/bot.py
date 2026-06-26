@@ -749,12 +749,12 @@ def _xp_keyboard(pid: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("📝 Заметка", callback_data=f"xp_note:{pid}"),
         ],
         [
-            InlineKeyboardButton("🏷 Категория", callback_data=f"xp_cat:{pid}"),
+            InlineKeyboardButton("🏷 Артикул",   callback_data=f"xp_sku:{pid}"),
+            InlineKeyboardButton("📦 Категория", callback_data=f"xp_cat:{pid}"),
             InlineKeyboardButton("💰 Цена FOB",  callback_data=f"xp_price:{pid}"),
         ],
         [
-            InlineKeyboardButton("🏭 Завод",    callback_data=f"xp_factory:{pid}"),
-            InlineKeyboardButton("🎪 Выставка", callback_data=f"xp_exh:{pid}"),
+            InlineKeyboardButton("🏭 Завод", callback_data=f"xp_factory:{pid}"),
         ],
         [InlineKeyboardButton("✖️ Закрыть", callback_data=f"xp_done:{pid}")],
     ])
@@ -920,11 +920,20 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return EditPanelState.ADDING_NOTE
 
+    if data.startswith("xp_sku:"):
+        p   = get_product(pid)
+        sku = p.get("sku", "—") if p else "—"
+        await query.edit_message_text(
+            f"🏷 <b>Артикул (SKU)</b>\n\nТекущий: <b>{sku}</b>\n\nВведите новый:",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return EditPanelState.EDITING_SKU
+
     if data.startswith("xp_cat:"):
         p   = get_product(pid)
         cat = p.get("category", "—") if p else "—"
         await query.edit_message_text(
-            f"🏷 <b>Категория</b>\n\nТекущая: <b>{cat}</b>\n\nВведите новую:",
+            f"📦 <b>Категория</b>\n\nТекущая: <b>{cat}</b>\n\nВведите новую:",
             parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
         )
         return EditPanelState.EDITING_CAT
@@ -1076,6 +1085,17 @@ async def edit_panel_recv_note(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
+async def edit_panel_recv_sku(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.message.text:
+        await update.message.reply_text("⚠️ Введите артикул.")
+        return EditPanelState.EDITING_SKU
+    pid     = context.user_data.get("_xp_pid", "")
+    user_id = update.effective_user.id
+    update_product(pid, {"sku": update.message.text.strip()}, updated_by=user_id)
+    await _restore_card(context, pid)
+    return ConversationHandler.END
+
+
 async def edit_panel_recv_cat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     pid     = context.user_data.get("_xp_pid", "")
     user_id = update.effective_user.id
@@ -1190,6 +1210,10 @@ def main() -> None:
             EditPanelState.EDITING_EXH: [
                 CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_panel_recv_exh),
+            ],
+            EditPanelState.EDITING_SKU: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_cancel:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_panel_recv_sku),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],

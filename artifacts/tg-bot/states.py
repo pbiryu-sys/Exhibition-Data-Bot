@@ -16,6 +16,7 @@ class EditPanelState(IntEnum):
     EDITING_PRICE = auto()
     EDITING_FACT  = auto()
     EDITING_EXH   = auto()
+    EDITING_SKU   = auto()
 
 
 class FactoryPanelState(IntEnum):

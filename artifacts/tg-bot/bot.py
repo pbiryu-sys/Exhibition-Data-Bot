@@ -278,12 +278,13 @@ SETTINGS_KEYS = [
     ("terminal_fee_kzt", "Терминал Q5, ₸"),
     ("storage_fee_kzt", "Хранение R5, ₸"),
     ("forwarder_fee_kzt", "Экспедитор S5, ₸"),
-    ("google_share_email", "Google email (для доступа к файлам)"),
+    ("google_sheet_id", "Google Sheet ID"),
+    ("google_drive_folder_id", "Google Drive Folder ID (опц.)"),
     ("debug_mode", "Debug trace (вкл/выкл)"),
 ]
 
 # Keys that store text strings (not numbers)
-SETTINGS_STRING_KEYS = {"google_share_email"}
+SETTINGS_STRING_KEYS = {"google_share_email", "google_sheet_id", "google_drive_folder_id"}
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────

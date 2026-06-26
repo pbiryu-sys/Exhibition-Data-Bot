@@ -2,12 +2,23 @@
 Google Sheets + Drive export for product cards.
 Auth: Google Service Account JSON (stored in GOOGLE_SERVICE_ACCOUNT_JSON secret).
 
-Required secrets:
-  GOOGLE_SERVICE_ACCOUNT_JSON  — full JSON content of the service account key file
+IMPORTANT — service accounts have NO Drive storage quota of their own.
+Files must be written into resources that the USER already owns and has shared
+with the service account (Editor role).
 
-Settings (in settings.json):
-  google_share_email  — your personal Gmail; the sheet + folders are shared here
-  google_sheet_id     — auto-set on first export; do not edit manually
+Setup required (one-time):
+  1. Create a Google Spreadsheet in your Drive.
+     Share it with the SA email as Editor.
+     Paste the sheet ID into Settings → "Google Sheet ID".
+
+  2. (Optional) Create a Drive folder in your Drive.
+     Share it with the SA email as Editor.
+     Paste the folder ID into Settings → "Google Drive Folder ID".
+     If omitted, media files are skipped — only the sheet row is written.
+
+  3. Make sure Sheets API and Drive API are enabled in your Google Cloud project.
+
+Service account email: printed at export start so you know what to share with.
 """
 import os
 import time
@@ -24,9 +35,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-SHEET_TAB_NAME   = "Products"
-ROOT_FOLDER_NAME = "Exhibition Bot"
-SHEET_HEADERS    = [
+SHEET_TAB_NAME = "Products"
+SHEET_HEADERS  = [
     "product_id", "sku", "factory", "category",
     "fob_usd", "qty_40hq", "cost_price_kzt", "sell_price_kzt",
     "exhibition", "created_at", "photos", "videos", "documents",
@@ -52,6 +62,7 @@ def _sa_email() -> str:
 
 
 def is_configured() -> bool:
+    """True when the service account secret is present."""
     return _sa_json() is not None
 
 
@@ -64,6 +75,7 @@ def _creds():
 
 
 def _sheets_client():
+    """gspread 6.x: use service_account_from_dict (authorize() was removed)."""
     import gspread
     logger.info(">>> INIT SHEETS CLIENT")
     info = _sa_json()
@@ -81,58 +93,8 @@ def _drive_service():
 
 # ── Google Drive helpers ───────────────────────────────────────────────────────
 
-def _share_with_email(drive, file_id: str, email: str, role: str = "writer") -> None:
-    if not email or "@" not in email:
-        return
-    try:
-        drive.permissions().create(
-            fileId=file_id,
-            body={"role": role, "type": "user", "emailAddress": email},
-            sendNotificationEmail=False,
-        ).execute()
-        logger.info("Shared %s with %s (role=%s)", file_id, email, role)
-    except Exception:
-        logger.exception("Failed to share %s with %s", file_id, email)
-
-
-def _share_anyone_reader(drive, file_id: str) -> None:
-    try:
-        drive.permissions().create(
-            fileId=file_id,
-            body={"role": "reader", "type": "anyone"},
-        ).execute()
-    except Exception:
-        logger.exception("share_anyone_reader failed for %s", file_id)
-
-
-def _ensure_folder(drive, name: str, parent_id: str | None = None,
-                   share_email: str | None = None) -> str:
-    safe = name.replace("'", "\\'")
-    q = (
-        f"name='{safe}' and mimeType='application/vnd.google-apps.folder' "
-        f"and trashed=false"
-    )
-    if parent_id:
-        q += f" and '{parent_id}' in parents"
-    resp = drive.files().list(q=q, fields="files(id)").execute()
-    hits = resp.get("files", [])
-    if hits:
-        fid = hits[0]["id"]
-        logger.info("Drive folder found: '%s' id=%s", name, fid)
-        return fid
-    meta: dict = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
-    if parent_id:
-        meta["parents"] = [parent_id]
-    f = drive.files().create(body=meta, fields="id").execute()
-    folder_id = f["id"]
-    logger.info("Drive folder CREATED: '%s' id=%s", name, folder_id)
-    _share_anyone_reader(drive, folder_id)
-    if share_email:
-        _share_with_email(drive, folder_id, share_email, role="writer")
-    return folder_id
-
-
 def _upload_bytes(drive, data: bytes, name: str, mime: str, folder_id: str) -> str:
+    """Upload raw bytes into a user-owned Drive folder; return webViewLink."""
     from googleapiclient.http import MediaIoBaseUpload
     media = MediaIoBaseUpload(BytesIO(data), mimetype=mime, resumable=False)
     f = drive.files().create(
@@ -140,9 +102,8 @@ def _upload_bytes(drive, data: bytes, name: str, mime: str, folder_id: str) -> s
         media_body=media,
         fields="id,webViewLink",
     ).execute()
-    _share_anyone_reader(drive, f["id"])
     link = f.get("webViewLink", "")
-    logger.info("Drive upload OK: %s → %s", name, link)
+    logger.info(">>> DRIVE UPLOAD DONE: %s → %s", name, link)
     return link
 
 
@@ -156,60 +117,41 @@ async def _upload_tg_file(bot, file_id: str, file_name: str,
 
 # ── Google Sheets helpers ──────────────────────────────────────────────────────
 
-def _open_or_create_sheet(gc, drive, sheet_id: str | None, share_email: str | None):
+def _open_sheet(gc, sheet_id: str):
+    """
+    Open a spreadsheet the user already owns and has shared with the SA.
+    Never creates a sheet — service accounts have no Drive quota.
+    """
     logger.info(">>> OPEN OR CREATE SHEET (sheet_id=%s)", sheet_id)
-    sh = None
-
-    if sheet_id:
-        try:
-            sh = gc.open_by_key(sheet_id)
-            logger.info(">>> SHEET READY (existing) id=%s url=%s", sh.id, sh.url)
-            return sh
-        except Exception:
-            logger.exception("Cannot open sheet by key %s — will create new", sheet_id)
-
-    sh = gc.create(SHEET_TAB_NAME)
-    logger.info(">>> SHEET READY (newly created) id=%s url=%s", sh.id, sh.url)
-
-    # Share with user's Gmail so it appears in their Drive
-    if share_email:
-        try:
-            drive.permissions().create(
-                fileId=sh.id,
-                body={"role": "writer", "type": "user",
-                      "emailAddress": share_email},
-                sendNotificationEmail=False,
-            ).execute()
-            logger.info("Sheet shared with %s (writer)", share_email)
-        except Exception:
-            logger.exception("Failed to share sheet with %s", share_email)
-
-    # Persist new sheet ID
-    try:
-        s = load_settings()
-        s["google_sheet_id"] = sh.id
-        save_settings(s)
-        logger.info("Saved google_sheet_id=%s to settings.json", sh.id)
-    except Exception:
-        logger.exception("Failed to persist google_sheet_id to settings.json")
-
+    sh = gc.open_by_key(sheet_id)
+    logger.info(">>> SHEET READY — title='%s' id=%s url=%s", sh.title, sh.id, sh.url)
     return sh
 
 
 def _worksheet(sh):
-    ws = sh.sheet1
-    ws.update_title(SHEET_TAB_NAME)
+    try:
+        ws = sh.sheet1
+    except Exception:
+        ws = sh.get_worksheet(0)
+
+    logger.info("Worksheet: title='%s' id=%s cols=%s",
+                ws.title, ws.id, ws.col_count)
+
     if not ws.row_values(1):
         ws.append_row(SHEET_HEADERS, value_input_option="RAW")
-        logger.info("Header row written to sheet")
+        logger.info("Header row written (%d columns)", len(SHEET_HEADERS))
+    else:
+        existing = ws.row_values(1)
+        logger.info("Existing header (%d cols): %s", len(existing), existing)
+
     return ws
 
 
 def _append_row(product: dict, settings: dict,
                 photo_links: list, video_links: list, doc_links: list,
-                sheet_id: str | None, drive, share_email: str | None) -> str:
+                sheet_id: str, drive, drive_folder_id: str | None) -> str:
     gc = _sheets_client()
-    sh = _open_or_create_sheet(gc, drive, sheet_id, share_email)
+    sh = _open_sheet(gc, sheet_id)
     ws = _worksheet(sh)
 
     fob = product.get("fob_usd", 0)
@@ -241,8 +183,13 @@ def _append_row(product: dict, settings: dict,
         "\n".join(doc_links),
     ]
 
-    logger.info(">>> APPEND ROW START — product=%s factory=%s sku=%s",
-                product.get("id"), product.get("factory"), row[1])
+    if len(row) != len(SHEET_HEADERS):
+        raise RuntimeError(
+            f"Row length {len(row)} != headers length {len(SHEET_HEADERS)} — aborting append"
+        )
+
+    logger.info(">>> APPEND ROW START — %d columns, product=%s factory=%s sku=%s",
+                len(row), product.get("id"), product.get("factory"), row[1])
     ws.append_row(row, value_input_option="USER_ENTERED")
     logger.info(">>> APPEND ROW SUCCESS — sheet=%s", sh.id)
 
@@ -253,8 +200,11 @@ def _append_row(product: dict, settings: dict,
 
 async def export_product(product: dict, settings: dict, bot) -> dict:
     """
-    Full export pipeline. All exceptions are logged with full tracebacks
-    and then re-raised so callers can see exactly where it broke.
+    Full export pipeline:
+      1. Upload media to user's Drive folder (if google_drive_folder_id is set).
+      2. Append one row to the user's Google Sheet (google_sheet_id required).
+
+    Returns {"status": "ok", ...} or {"status": "<error_type>", "error": "..."}
     """
     logger.info(">>> EXPORT STARTED — product_id=%s", product.get("id", "?"))
 
@@ -262,91 +212,101 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
         logger.info("Google export skipped — GOOGLE_SERVICE_ACCOUNT_JSON not set")
         return {"status": "not_configured"}
 
-    pid         = product.get("id", "?")
-    sku         = product.get("sku") or product.get("article") or product["id"][:8]
-    factory     = (product.get("factory") or "unknown").replace("/", "-")[:20]
-    date        = datetime.now().strftime("%Y%m%d")
-    share_email = (settings.get("google_share_email") or "").strip() or None
+    pid             = product.get("id", "?")
+    sku             = product.get("sku") or product.get("article") or product["id"][:8]
+    factory         = (product.get("factory") or "unknown").replace("/", "-")[:20]
+    sheet_id        = (settings.get("google_sheet_id") or "").strip()
+    drive_folder_id = (settings.get("google_drive_folder_id") or "").strip() or None
+    sa_email        = _sa_email()
 
-    logger.info(">>> PRODUCT SAVED — product_id=%s factory=%s sku=%s sa=%s share_with=%s",
-                pid, factory, sku, _sa_email(), share_email or "(none — set in ⚙️ Settings)")
+    logger.info(
+        ">>> PRODUCT SAVED — id=%s factory=%s sku=%s | sa=%s | sheet_id=%s | drive_folder=%s",
+        pid, factory, sku, sa_email, sheet_id or "(NOT SET)", drive_folder_id or "(none)",
+    )
 
-    # ── Drive setup ────────────────────────────────────────────────────────────
-    logger.info(">>> DRIVE UPLOAD START — connecting to Drive API")
-    try:
-        drive = _drive_service()
-        logger.info("Drive service authenticated as %s", _sa_email())
-    except Exception:
-        logger.exception("Drive auth FAILED")
-        return {"status": "drive_error", "error": "Drive auth failed — see logs"}
+    # Sheet ID is mandatory
+    if not sheet_id:
+        msg = (
+            f"google_sheet_id not set. "
+            f"Create a Google Sheet, share it with {sa_email} (Editor), "
+            f"then paste the sheet ID into ⚙️ Settings → 'Google Sheet ID'."
+        )
+        logger.error(msg)
+        return {"status": "no_sheet_id", "error": msg}
 
-    try:
-        root_id   = _ensure_folder(drive, ROOT_FOLDER_NAME, share_email=share_email)
-        folder_id = _ensure_folder(drive, f"{factory}_{sku}_{date}", root_id,
-                                   share_email=share_email)
-    except Exception:
-        logger.exception("Drive folder setup FAILED")
-        return {"status": "drive_error", "error": "Drive folder setup failed — see logs"}
-
-    folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
-    logger.info(">>> DRIVE UPLOAD DONE — folder_url=%s", folder_url)
-
+    # ── Drive media uploads (optional) ─────────────────────────────────────────
     photo_links: list[str] = []
     video_links: list[str] = []
     doc_links:   list[str] = []
 
-    # ── Upload hero media ──────────────────────────────────────────────────────
-    for m in product.get("hero_media") or []:
-        fid   = m.get("telegram_file_id") or m.get("file_id")
-        if not fid:
-            continue
-        ftype = m.get("type", "photo")
-        fname = (
-            m.get("file_name")
-            or (f"photo_{int(time.time())}.jpg" if ftype == "photo"
-                else f"video_{int(time.time())}.mp4")
-        )
-        mime = "image/jpeg" if ftype == "photo" else "video/mp4"
+    if drive_folder_id:
+        logger.info(">>> DRIVE UPLOAD START — folder_id=%s", drive_folder_id)
         try:
-            link = await _upload_tg_file(bot, fid, fname, mime, folder_id, drive)
-            (photo_links if ftype == "photo" else video_links).append(link)
+            drive = _drive_service()
+            logger.info("Drive service authenticated as %s", sa_email)
         except Exception:
-            logger.exception("Hero media upload FAILED [%s]", fname)
+            logger.exception("Drive auth FAILED")
+            drive = None
 
-    # ── Upload attached documents ──────────────────────────────────────────────
-    for d in product.get("documents") or []:
-        fid   = d.get("telegram_file_id")
-        if not fid:
-            continue
-        fname = d.get("file_name", "document")
-        ftype = d.get("file_type", "application/octet-stream")
-        if ftype == "photo":
-            mime = "image/jpeg"
-        elif ftype == "video":
-            mime = "video/mp4"
-        else:
-            mime = ftype if "/" in ftype else "application/octet-stream"
-        try:
-            link = await _upload_tg_file(bot, fid, fname, mime, folder_id, drive)
-            doc_links.append(link)
-        except Exception:
-            logger.exception("Doc upload FAILED [%s]", fname)
+        if drive:
+            for m in product.get("hero_media") or []:
+                fid   = m.get("telegram_file_id") or m.get("file_id")
+                if not fid:
+                    continue
+                ftype = m.get("type", "photo")
+                fname = (
+                    m.get("file_name")
+                    or (f"photo_{int(time.time())}.jpg" if ftype == "photo"
+                        else f"video_{int(time.time())}.mp4")
+                )
+                mime = "image/jpeg" if ftype == "photo" else "video/mp4"
+                try:
+                    link = await _upload_tg_file(bot, fid, fname, mime, drive_folder_id, drive)
+                    (photo_links if ftype == "photo" else video_links).append(link)
+                except Exception:
+                    logger.exception("Hero media upload FAILED [%s]", fname)
+
+            for d in product.get("documents") or []:
+                fid   = d.get("telegram_file_id")
+                if not fid:
+                    continue
+                fname = d.get("file_name", "document")
+                ftype = d.get("file_type", "application/octet-stream")
+                mime = (
+                    "image/jpeg" if ftype == "photo" else
+                    "video/mp4"  if ftype == "video" else
+                    (ftype if "/" in ftype else "application/octet-stream")
+                )
+                try:
+                    link = await _upload_tg_file(bot, fid, fname, mime, drive_folder_id, drive)
+                    doc_links.append(link)
+                except Exception:
+                    logger.exception("Doc upload FAILED [%s]", fname)
+
+        folder_url = f"https://drive.google.com/drive/folders/{drive_folder_id}"
+        logger.info("Drive uploads done — photos=%d videos=%d docs=%d folder=%s",
+                    len(photo_links), len(video_links), len(doc_links), folder_url)
+    else:
+        logger.info("Drive upload skipped — google_drive_folder_id not set")
+        folder_url = ""
 
     # ── Append Sheets row ──────────────────────────────────────────────────────
-    sheet_id = settings.get("google_sheet_id") or None
     try:
+        drive_svc = _drive_service() if drive_folder_id else None
         sheet_url = _append_row(
             product, settings, photo_links, video_links, doc_links,
-            sheet_id, drive, share_email,
+            sheet_id, drive_svc, drive_folder_id,
         )
     except Exception:
         logger.exception("Sheets append FAILED for product=%s", pid)
-        return {"status": "sheets_error",
-                "error": "Sheets append failed — see logs", "folder_url": folder_url}
+        return {
+            "status":     "sheets_error",
+            "error":      "Sheets append failed — see bot logs for full traceback",
+            "folder_url": folder_url,
+        }
 
     logger.info(
-        ">>> EXPORT COMPLETE — product=%s sheet=%s folder=%s "
-        "photos=%d videos=%d docs=%d",
+        ">>> EXPORT COMPLETE — product=%s sheet=%s folder=%s photos=%d videos=%d docs=%d",
         pid, sheet_url, folder_url, len(photo_links), len(video_links), len(doc_links),
     )
     return {

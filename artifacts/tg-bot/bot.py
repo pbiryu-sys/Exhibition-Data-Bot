@@ -1144,14 +1144,14 @@ def _card_markup(pid: str) -> InlineKeyboardMarkup:
     """Buttons shown on a finished product card: Edit + Delete."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Редактировать",   callback_data=f"edit_{pid}")],
-        [InlineKeyboardButton("🗑 Удалить карточку", callback_data=f"xp_del:{pid}")],
+        [InlineKeyboardButton("🗑 Удалить карточку", callback_data=f"delete_product:{pid}")],
     ])
 
 
 def _card_del_confirm_keyboard(pid: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Да, удалить",  callback_data=f"xp_delok:{pid}"),
-         InlineKeyboardButton("❌ Отмена",       callback_data=f"xp_delcancel:{pid}")],
+        [InlineKeyboardButton("✅ Да, удалить",  callback_data=f"delete_product_ok:{pid}"),
+         InlineKeyboardButton("❌ Отмена",       callback_data=f"delete_product_cancel:{pid}")],
     ])
 
 
@@ -1474,35 +1474,6 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if p:
             await query.edit_message_text(_xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid))
         return EditPanelState.IDLE
-
-    # ── Delete card (from product card, not catalog) ───────────────────────
-    if data.startswith("xp_del:"):
-        p   = get_product(pid)
-        sku = (p.get("sku") or p.get("article") or pid[:8]) if p else pid[:8]
-        await query.edit_message_text(
-            f"🗑 <b>Удалить карточку?</b>\n\n"
-            f"<b>#{sku}</b> — {p.get('factory', '—') if p else '—'}\n\n"
-            "Карточка будет скрыта из каталога и экспорта. "
-            "Данные сохранятся в базе.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_card_del_confirm_keyboard(pid),
-        )
-        return EditPanelState.DELETE_CONFIRM
-
-    if data.startswith("xp_delok:"):
-        soft_delete_product(pid, user_id)
-        logger.info("Product deleted (soft): id=%s by user=%d", pid, user_id)
-        await query.edit_message_text(
-            "✅ <b>Карточка удалена.</b>\n\n"
-            "Товар скрыт из каталога и больше не будет экспортироваться.",
-            parse_mode=ParseMode.HTML,
-        )
-        return ConversationHandler.END
-
-    if data.startswith("xp_delcancel:"):
-        # Return to the product card view
-        await _restore_card(context, pid)
-        return ConversationHandler.END
 
     if data.startswith("xp_done:"):
         await _restore_card(context, pid)
@@ -2064,9 +2035,9 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if not google_export.is_configured():
             await query.answer("⚠️ Google-интеграция не настроена.", show_alert=True)
             return CatalogState.DETAIL
-        # Show spinner, run export, report result
+        # Show spinner (edit in place — no noise message), run export, show result
         await query.edit_message_text(
-            "⏳ <b>Экспорт в Google…</b>\n\nЗагружаю файлы в Drive и записываю в Sheets.",
+            "⏳ <b>Экспорт в Google Sheets…</b>",
             parse_mode=ParseMode.HTML,
         )
         result = await google_export.export_product(p, settings, context.bot)
@@ -2074,9 +2045,8 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             n_files = result["photos"] + result["videos"] + result["docs"]
             text = (
                 f"✅ <b>Экспорт выполнен</b>\n\n"
-                f"📊 <a href='{result['sheet_url']}'>Открыть таблицу</a>\n"
-                f"📁 <a href='{result['folder_url']}'>Открыть папку Drive</a>\n\n"
-                f"Файлов загружено: {n_files}"
+                f"📊 <a href='{result['sheet_url']}'>Открыть таблицу</a>\n\n"
+                f"Фото в таблице: {n_files}"
             )
         else:
             text = (
@@ -2456,6 +2426,59 @@ async def admin_panel_recv_remove(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
 
 
+# ─── Standalone delete handler (state-machine-independent) ───────────────────
+
+async def delete_product_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles delete_product:, delete_product_ok:, delete_product_cancel: callbacks.
+    Registered at the app level (not inside any ConversationHandler) so it fires
+    regardless of which conversation state the user is in.
+    """
+    query   = update.callback_query
+    await query.answer()
+    data    = query.data
+    user_id = update.effective_user.id
+
+    if data.startswith("delete_product:"):
+        pid = data[len("delete_product:"):]
+        p   = get_product(pid)
+        if not p:
+            await query.edit_message_text("⚠️ Товар не найден.")
+            return
+        sku = p.get("sku") or p.get("article") or pid[:8]
+        await query.edit_message_text(
+            f"🗑 <b>Удалить карточку?</b>\n\n"
+            f"<b>#{sku}</b> — {p.get('factory', '—')}\n\n"
+            "Карточка будет скрыта из каталога и экспорта. "
+            "Данные сохранятся в базе.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_card_del_confirm_keyboard(pid),
+        )
+        return
+
+    if data.startswith("delete_product_ok:"):
+        pid = data[len("delete_product_ok:"):]
+        soft_delete_product(pid, user_id)
+        logger.info("Product deleted (soft): id=%s by user=%d", pid, user_id)
+        await query.edit_message_text(
+            "✅ <b>Карточка удалена.</b>\n\n"
+            "Товар скрыт из каталога и не будет экспортироваться.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if data.startswith("delete_product_cancel:"):
+        pid = data[len("delete_product_cancel:"):]
+        p   = get_product(pid)
+        if p:
+            await query.edit_message_text(
+                f"Отменено. Карточка <b>#{p.get('sku') or pid[:8]}</b> не удалена.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_card_markup(pid),
+            )
+        return
+
+
 # ─── Global error handler & fallback callback answerer ────────────────────────
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2523,9 +2546,6 @@ def main() -> None:
     edit_panel_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(edit_by_id_cb, pattern=r"^edit_"),
-            # xp_del: appears on the product card OUTSIDE the edit panel,
-            # so it must be an entry point — not just an IDLE-state handler.
-            CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_del:"),
         ],
         states={
             EditPanelState.IDLE: [
@@ -2569,9 +2589,6 @@ def main() -> None:
                     (filters.Document.ALL | filters.PHOTO | filters.VIDEO) & ~filters.COMMAND,
                     edit_panel_recv_doc,
                 ),
-            ],
-            EditPanelState.DELETE_CONFIRM: [
-                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_delok:|^xp_delcancel:"),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -2720,6 +2737,14 @@ def main() -> None:
     app.add_handler(exhibition_panel_conv)
     app.add_handler(product_conv)
     app.add_handler(settings_panel_conv)
+
+    # Standalone delete handler — registered at group=1 so it runs after ConversationHandlers
+    # (group=0) but before the silent fallback (group=99). It is state-machine-independent:
+    # works regardless of which conversation the user is currently in.
+    app.add_handler(CallbackQueryHandler(
+        delete_product_cb,
+        pattern=r"^delete_product:|^delete_product_ok:|^delete_product_cancel:",
+    ), group=1)
 
     # Global error handler — answers any unanswered callback_query on exception
     app.add_error_handler(error_handler)

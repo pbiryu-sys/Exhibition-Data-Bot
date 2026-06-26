@@ -927,7 +927,7 @@
     "created_by": 348641645,
     "created_at": 1782492725.7594104,
     "updated_by": 348641645,
-    "updated_at": 1782492726.2908924,
+    "updated_at": 1782495745.4434502,
     "sku": "Тест10",
     "category": "Другое",
     "fob_usd": 100.0,
@@ -948,7 +948,8 @@
       1030
     ],
     "text_message_id": 1031,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "819b7e94-fb36-4a67-b77a-46e22c2f31e1",

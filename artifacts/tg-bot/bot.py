@@ -40,6 +40,7 @@ SETTINGS_KEYS = [
     ("storage_fee_kzt", "Хранение Q5, ₸"),
     ("broker_fee_kzt", "Брокер R5, ₸"),
     ("forwarder_fee_kzt", "Экспедитор S5, ₸"),
+    ("debug_mode", "Debug trace (вкл/выкл)"),
 ]
 
 FACTORY_OPTIONS = ["DHZ", "WNQ", "Matrix OEM", "Johnson clone", "Другое (ввести)"]
@@ -510,9 +511,25 @@ async def settings_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     for i, (key, label) in enumerate(SETTINGS_KEYS, 1):
         if text.startswith(f"{i}."):
+            settings = load_settings()
+
+            # debug_mode is a boolean toggle — flip immediately, no text input needed
+            if key == "debug_mode":
+                settings["debug_mode"] = not bool(settings.get("debug_mode", False))
+                save_settings(settings)
+                state = "ВКЛ 🟢" if settings["debug_mode"] else "ВЫКЛ 🔴"
+                await update.message.reply_text(
+                    f"✅ <b>Debug trace</b>: {state}",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=_settings_keyboard(),
+                )
+                await update.message.reply_text(
+                    format_settings(settings), parse_mode=ParseMode.HTML
+                )
+                return SettingsState.CHOOSING
+
             context.user_data["editing_key"] = key
             context.user_data["editing_label"] = label
-            settings = load_settings()
             current = settings[key]
             await update.message.reply_text(
                 f"✏️ <b>{label}</b>\n\nТекущее значение: <code>{current}</code>\n\nВведите новое значение:",

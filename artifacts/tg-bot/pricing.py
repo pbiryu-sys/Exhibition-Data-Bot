@@ -132,18 +132,32 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
         # ── ROOT (primary validation target) ─────────────────────────────────
         "G5":                 G5,           # retail price — anchor G5_bot == G5_excel
 
-        # ── Cost breakdown (diagnostic layer) ─────────────────────────────────
+        # ── All Excel cells (exact variable values, no recomputation) ─────────
+        "K5":  round(K5, 2),   # FOB KZT container total
+        "L5":  round(L5, 2),   # container freight KZT (O1 × O2)
+        "M5":  round(M5, 2),   # insurance / handling
+        "N5":  round(N5, 2),   # customs duty flat KZT
+        "O5":  O5,             # VAT on container
+        "P5":  P5,             # terminal fee KZT
+        "Q5":  Q5,             # storage fee KZT
+        "R5":  R5,             # broker fee KZT
+        "S5":  S5,             # forwarder fee KZT
+        "T5":  T5,             # SUM(K5:S5) total container cost
+        "U5":  U5,             # T5 / E5  unit cost
+        "V5":  V5,             # T5 − O5  net ex-VAT
+
+        # ── Input snapshot (for debug trace display) ──────────────────────────
+        "O1":  O1,             # exchange rate
+        "O2":  O2,             # container_cost_usd
+        "E5":  E5,             # qty_40hq
+
+        # ── Derived display helpers ────────────────────────────────────────────
         "fob_kzt":            round(K5, 2),
-        "L5":                 round(L5, 2),
-        "M5":                 round(M5, 2),
-        "N5":                 round(N5, 2),
         "O5_vat":             O5,
         "logistics_per_unit": round((L5 + M5 + N5 + O5 + P5 + Q5 + R5 + S5) / qty_40hq if qty_40hq > 0 else 0, 2),
         "customs_per_unit":   round(N5 / qty_40hq if qty_40hq > 0 else 0, 2),
         "total_container":    T5,
         "unit_cost":          U5,
         "net_ex_vat":         V5,
-
-        # ── Legacy alias (keeps formatter working without change) ─────────────
         "sell_price":         G5,
     }

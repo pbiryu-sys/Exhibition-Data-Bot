@@ -45,6 +45,39 @@ def format_product_card(data: dict, settings: dict) -> str:
         f"🔗 Тег: {tag}",
     ]
 
+    if settings.get("debug_mode"):
+        fob_usd  = data["price"]
+        qty      = data["qty_40hq"]
+        O1       = calc["O1"]
+        O2       = calc["O2"]
+        margin   = settings["margin"]
+        vat      = settings["vat"]
+        vat_base = round((calc["L5"] * 0.85) + calc["N5"] + calc["M5"] + calc["K5"], 2)
+        lines += [
+            "",
+            "────────────────────",
+            "🔍 <b>DEBUG TRACE</b>",
+            "────────────────────",
+            f"K5  FOB KZT:        {calc['K5']:>14,.2f}",
+            f"L5  Контейнер KZT:  {calc['L5']:>14,.2f}",
+            f"M5  Страховка:      {calc['M5']:>14,.2f}",
+            f"N5  Таможня:        {calc['N5']:>14,.2f}",
+            f"O5  НДС:            {calc['O5']:>14,.2f}",
+            f"P5  Терминал:       {calc['P5']:>14,.2f}",
+            f"Q5  Хранение:       {calc['Q5']:>14,.2f}",
+            f"R5  Брокер:         {calc['R5']:>14,.2f}",
+            f"S5  Экспедитор:     {calc['S5']:>14,.2f}",
+            f"T5  Итого контейнер:{calc['T5']:>14,.2f}",
+            f"U5  Себестоимость:  {calc['U5']:>14,.2f}",
+            f"V5  Без НДС:        {calc['V5']:>14,.2f}",
+            "────────────────────",
+            f"FOB:  ${fob_usd} × {qty} шт × {O1} = {calc['K5']:,.2f} ₸",
+            f"Фрахт: {O1} × ${O2} = {calc['L5']:,.2f} ₸",
+            f"База НДС (85%L5+N5+M5+K5): {vat_base:,.2f}",
+            f"Маржа: {calc['U5']:,.2f} / (1 − {margin}) × {vat} = {calc['G5']:,.2f} ₸",
+            f"<b>G5 (ROOT RETAIL): {calc['G5']:,.2f} ₸</b>",
+        ]
+
     return "\n".join(lines)
 
 
@@ -61,6 +94,7 @@ def format_settings(settings: dict) -> str:
         f"7. Хранение Q5:  <b>{settings['storage_fee_kzt']:,.0f} ₸</b>",
         f"8. Брокер R5:    <b>{settings['broker_fee_kzt']:,.0f} ₸</b>",
         f"9. Экспедитор S5:<b>{settings['forwarder_fee_kzt']:,.0f} ₸</b>",
+        f"10. Debug trace:  <b>{'ВКЛ 🟢' if settings.get('debug_mode') else 'ВЫКЛ 🔴'}</b>",
         "",
         "Нажмите кнопку для изменения параметра.",
     ]

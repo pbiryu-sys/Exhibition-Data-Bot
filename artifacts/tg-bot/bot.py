@@ -33,6 +33,7 @@ from access import (
 )
 from pricing import load_settings, save_settings, calculate_cost_per_unit
 from formatters import format_product_card, format_card_from_db, format_settings
+import google_export
 from context_store import (
     load_user_context, save_user_context, clear_user_context,
     get_factories, add_factory, delete_factory,
@@ -558,6 +559,15 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "text_message_id":   sent_text.message_id,
         "card_chat_id":      chat_id,
     }, updated_by=user_id)
+
+    # Auto-export to Google Sheets + Drive (fire-and-forget, non-blocking)
+    if google_export.is_configured() and not edit_pid:
+        saved_product = get_product(saved_id)
+        if saved_product:
+            import asyncio
+            asyncio.ensure_future(
+                google_export.export_product(saved_product, settings, context.bot)
+            )
 
     # Restore keyboard via a transient message, then delete all flow clutter
     confirm_msg = await context.bot.send_message(
@@ -1725,12 +1735,15 @@ def _catalog_detail_text(p: dict, settings: dict) -> str:
 
 
 def _catalog_detail_keyboard(pid: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    rows = [
         [InlineKeyboardButton("👁 Просмотр карточки", callback_data=f"cat_view_{pid}")],
         [InlineKeyboardButton("✏️ Редактировать",     callback_data=f"edit_{pid}"),
          InlineKeyboardButton("🗑 Удалить",           callback_data=f"cat_del_{pid}")],
-        [InlineKeyboardButton("🔙 Назад к списку",    callback_data="cat_back")],
-    ])
+    ]
+    if google_export.is_configured():
+        rows.append([InlineKeyboardButton("📤 Экспорт в Google", callback_data=f"cat_export_{pid}")])
+    rows.append([InlineKeyboardButton("🔙 Назад к списку", callback_data="cat_back")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _catalog_confirm_keyboard(pid: str) -> InlineKeyboardMarkup:
@@ -1941,6 +1954,44 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=_catalog_list_keyboard(page, products),
         )
         return CatalogState.LIST
+
+    # ── Manual Google export ──────────────────────────────────────────────
+    if data.startswith("cat_export_"):
+        pid = data[len("cat_export_"):]
+        p   = get_product(pid)
+        if not p:
+            return CatalogState.DETAIL
+        if not google_export.is_configured():
+            await query.answer("⚠️ Google-интеграция не настроена.", show_alert=True)
+            return CatalogState.DETAIL
+        # Show spinner, run export, report result
+        await query.edit_message_text(
+            "⏳ <b>Экспорт в Google…</b>\n\nЗагружаю файлы в Drive и записываю в Sheets.",
+            parse_mode=ParseMode.HTML,
+        )
+        result = await google_export.export_product(p, settings, context.bot)
+        if result["status"] == "ok":
+            n_files = result["photos"] + result["videos"] + result["docs"]
+            text = (
+                f"✅ <b>Экспорт выполнен</b>\n\n"
+                f"📊 <a href='{result['sheet_url']}'>Открыть таблицу</a>\n"
+                f"📁 <a href='{result['folder_url']}'>Открыть папку Drive</a>\n\n"
+                f"Файлов загружено: {n_files}"
+            )
+        else:
+            text = (
+                f"❌ <b>Ошибка экспорта</b>\n\n"
+                f"Статус: {result['status']}\n"
+                f"{result.get('error', '')}"
+            )
+        back_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Назад", callback_data=f"cat_p_{pid}")],
+        ])
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.HTML,
+            reply_markup=back_kb, disable_web_page_preview=True,
+        )
+        return CatalogState.DETAIL
 
     # ── Close ─────────────────────────────────────────────────────────────
     if data == "cat_close":

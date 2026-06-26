@@ -61,3 +61,30 @@ def update_product(user_id: int, product_id: str, updates: dict) -> bool:
             _save(data)
             return True
     return False
+
+
+def add_attachment(user_id: int, product_id: str, attachment: dict) -> bool:
+    data = _load()
+    uid = str(user_id)
+    for p in data.get(uid, []):
+        if p["id"] == product_id:
+            if "attachments" not in p:
+                p["attachments"] = []
+            p["attachments"].append(attachment)
+            _save(data)
+            return True
+    return False
+
+
+def delete_attachment(user_id: int, product_id: str, idx: int) -> bool:
+    data = _load()
+    uid = str(user_id)
+    for p in data.get(uid, []):
+        if p["id"] == product_id:
+            attachments = p.get("attachments", [])
+            if 0 <= idx < len(attachments):
+                attachments.pop(idx)
+                p["attachments"] = attachments
+                _save(data)
+                return True
+    return False

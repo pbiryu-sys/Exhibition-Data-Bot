@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from states import ProductState, CatalogEditState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState
+from states import ProductState, CatalogEditState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState, AttachmentPanelState
 from pricing import load_settings, save_settings, calculate_cost_per_unit
 from formatters import format_product_card, format_settings
 from context_store import (
@@ -31,6 +31,7 @@ from context_store import (
 )
 from products import (
     save_product, get_products, get_product, delete_product, update_product,
+    add_attachment, delete_attachment,
 )
 
 logging.basicConfig(
@@ -142,6 +143,7 @@ def _catalog_text(p: dict, index: int, total: int) -> str:
     dt = datetime.fromtimestamp(p.get("created_at", 0)).strftime("%d.%m.%Y")
     photo_line = "📸 <b>Фото:</b> есть" if p.get("photo_file_id") else ""
     note = p.get("note") or "—"
+    attachments = p.get("attachments", [])
     lines = [
         f"📦 <b>{p['sku']}</b>",
         f"🏷 {p['category']}",
@@ -154,6 +156,11 @@ def _catalog_text(p: dict, index: int, total: int) -> str:
     ]
     if photo_line:
         lines.append(photo_line)
+    if attachments:
+        last = attachments[-1]
+        emoji = {"photo": "📸", "video": "📹", "note": "📝"}.get(last["type"], "📎")
+        preview = f'"{last["text"][:25]}"' if last["type"] == "note" else last["timestamp"][:10]
+        lines.append(f"📎 Вложений: <b>{len(attachments)}</b> · {emoji} {preview}")
     lines += ["", f"📅 {dt}   <i>{index + 1} из {total}</i>"]
     return "\n".join(lines)
 
@@ -172,12 +179,16 @@ def _catalog_keyboard(index: int, total: int, p: dict) -> InlineKeyboardMarkup:
     else:
         nav_row = [InlineKeyboardButton("1 / 1", callback_data="cnoop")]
 
+    attach_count = len(p.get("attachments", []))
+    attach_label = f"📎 Вложения ({attach_count})" if attach_count else "📎 Добавить вложение"
+
     rows = [
         nav_row,
         [
             InlineKeyboardButton("✏️ Изменить", callback_data=f"cedit:{pid}"),
-            InlineKeyboardButton("🗑 Удалить", callback_data=f"cdel:{pid}:{index}"),
+            InlineKeyboardButton("🗑 Удалить",   callback_data=f"cdel:{pid}:{index}"),
         ],
+        [InlineKeyboardButton(attach_label, callback_data=f"ap_open:{pid}")],
     ]
     if p.get("photo_file_id"):
         rows.append([InlineKeyboardButton("📸 Показать фото", callback_data=f"cphoto:{pid}")])
@@ -925,6 +936,167 @@ async def settings_panel_edit_value(update: Update, context: ContextTypes.DEFAUL
     return SettingsPanelState.IDLE
 
 
+# ─── Attachment panel ────────────────────────────────────────────────────────
+
+async def _attach_edit(
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    keyboard: InlineKeyboardMarkup | None = None,
+) -> None:
+    msg_id  = context.user_data.get("_attach_msg_id")
+    chat_id = context.user_data.get("_attach_chat_id")
+    if msg_id and chat_id:
+        try:
+            await context.bot.edit_message_text(
+                text,
+                chat_id=chat_id,
+                message_id=msg_id,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+        except Exception:
+            pass
+
+
+def _ap_text(p: dict) -> str:
+    sku         = p.get("sku", "—")
+    attachments = p.get("attachments", [])
+    lines = [f"📎 <b>Вложения — {sku}</b>"]
+    if not attachments:
+        lines.append("\nВложений пока нет.")
+    else:
+        lines.append(f"\n<i>Всего: {len(attachments)}</i>\n")
+        for i, a in enumerate(attachments, 1):
+            ts = a.get("timestamp", "")[:10]
+            if a["type"] == "photo":
+                lines.append(f"{i}. 📸 Фото · {ts}")
+            elif a["type"] == "video":
+                lines.append(f"{i}. 📹 Видео · {ts}")
+            elif a["type"] == "note":
+                preview = a.get("text", "")[:50]
+                lines.append(f'{i}. 📝 "{preview}" · {ts}')
+    return "\n".join(lines)
+
+
+def _ap_keyboard(p: dict) -> InlineKeyboardMarkup:
+    pid         = p["id"]
+    attachments = p.get("attachments", [])
+    rows = []
+    for i, a in enumerate(attachments):
+        emoji = {"photo": "📸", "video": "📹", "note": "📝"}.get(a["type"], "📎")
+        ts    = a.get("timestamp", "")[:10]
+        label = f"{emoji} {ts}"
+        if a["type"] == "note":
+            label += f': {a.get("text", "")[:20]}'
+        rows.append([
+            InlineKeyboardButton(label,  callback_data="ap_nop"),
+            InlineKeyboardButton("🗑",   callback_data=f"ap_del:{pid}:{i}"),
+        ])
+    rows.append([InlineKeyboardButton("➕ Добавить вложение", callback_data=f"ap_add:{pid}")])
+    rows.append([InlineKeyboardButton("✖️ Закрыть",           callback_data=f"ap_done:{pid}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def attachment_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query   = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    pid     = query.data.split(":", 1)[1]
+
+    p = get_product(user_id, pid)
+    if not p:
+        await query.answer("Товар не найден", show_alert=True)
+        return ConversationHandler.END
+
+    context.user_data["_attach_pid"] = pid
+    sent = await query.message.reply_text(
+        _ap_text(p), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(p)
+    )
+    context.user_data["_attach_msg_id"]  = sent.message_id
+    context.user_data["_attach_chat_id"] = query.message.chat_id
+    return AttachmentPanelState.IDLE
+
+
+async def attachment_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query   = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data    = query.data
+
+    if data == "ap_nop":
+        return AttachmentPanelState.IDLE
+
+    if data.startswith("ap_del:"):
+        parts   = data.split(":")       # ap_del, pid, idx
+        del_pid = parts[1]
+        idx     = int(parts[2])
+        delete_attachment(user_id, del_pid, idx)
+        p = get_product(user_id, del_pid)
+        if p:
+            await query.edit_message_text(
+                _ap_text(p), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(p)
+            )
+        return AttachmentPanelState.IDLE
+
+    if data.startswith("ap_add:"):
+        pid = data.split(":", 1)[1]
+        context.user_data["_attach_pid"] = pid
+        await query.edit_message_text(
+            "📎 <b>Добавить вложение</b>\n\nОтправьте:\n"
+            "• 📸 фото\n• 📹 видео\n• 📝 текстовую заметку",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data=f"ap_cadd:{pid}")]]
+            ),
+        )
+        return AttachmentPanelState.ADDING
+
+    if data.startswith("ap_cadd:"):
+        pid = data.split(":", 1)[1]
+        p   = get_product(user_id, pid)
+        if p:
+            await query.edit_message_text(
+                _ap_text(p), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(p)
+            )
+        return AttachmentPanelState.IDLE
+
+    if data.startswith("ap_done:"):
+        await query.edit_message_text("📎 Вложения сохранены.")
+        return ConversationHandler.END
+
+    return AttachmentPanelState.IDLE
+
+
+async def attachment_panel_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from datetime import datetime
+    pid     = context.user_data.get("_attach_pid", "")
+    user_id = update.effective_user.id
+    ts      = datetime.now().strftime("%Y-%m-%dT%H:%M")
+
+    if update.message.photo:
+        attachment = {"type": "photo", "file_id": update.message.photo[-1].file_id, "timestamp": ts}
+    elif update.message.video:
+        attachment = {"type": "video", "file_id": update.message.video.file_id, "timestamp": ts}
+    elif update.message.text:
+        attachment = {"type": "note", "text": update.message.text.strip(), "timestamp": ts}
+    else:
+        await _attach_edit(
+            context,
+            "📎 <b>Добавить вложение</b>\n\n"
+            "⚠️ Поддерживаются фото, видео и текст.\n\nОтправьте ещё раз:",
+            InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data=f"ap_cadd:{pid}")]]
+            ),
+        )
+        return AttachmentPanelState.ADDING
+
+    add_attachment(user_id, pid, attachment)
+    p = get_product(user_id, pid)
+    if p:
+        await _attach_edit(context, _ap_text(p), _ap_keyboard(p))
+    return AttachmentPanelState.IDLE
+
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -948,6 +1120,26 @@ def main() -> None:
             ],
             ProductState.CATEGORY_PICK: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, product_category_pick),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
+    attachment_panel_conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(attachment_panel_open, pattern=r"^ap_open:"),
+        ],
+        states={
+            AttachmentPanelState.IDLE: [
+                CallbackQueryHandler(attachment_panel_cb, pattern=r"^ap_"),
+            ],
+            AttachmentPanelState.ADDING: [
+                CallbackQueryHandler(attachment_panel_cb, pattern=r"^ap_cadd:"),
+                MessageHandler(
+                    filters.PHOTO | filters.VIDEO | (filters.TEXT & ~filters.COMMAND),
+                    attachment_panel_receive,
+                ),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -1035,6 +1227,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^📚 Каталог$"), catalog_open))
     app.add_handler(catalog_edit_conv)
+    app.add_handler(attachment_panel_conv)
     app.add_handler(factory_panel_conv)
     app.add_handler(exhibition_panel_conv)
     app.add_handler(product_conv)

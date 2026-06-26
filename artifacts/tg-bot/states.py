@@ -27,3 +27,8 @@ class ExhibitionPanelState(IntEnum):
 class SettingsPanelState(IntEnum):
     IDLE = auto()
     EDITING = auto()      # waiting for new numeric value
+
+
+class AttachmentPanelState(IntEnum):
+    IDLE = auto()         # showing attachment list
+    ADDING = auto()       # waiting for photo / video / text

@@ -955,7 +955,7 @@
     "created_by": 348641645,
     "created_at": 1782495293.080311,
     "updated_by": 348641645,
-    "updated_at": 1782495293.2290475,
+    "updated_at": 1782495616.725717,
     "sku": "Беговая дорожка",
     "category": "Эллиптический тренажер",
     "fob_usd": 1000.0,
@@ -968,14 +968,15 @@
     "photo_file_id": null,
     "media_message_ids": [],
     "text_message_id": 1092,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "4b30b9a6-36b5-4b79-acf3-f3dcc34815cb",
     "created_by": 348641645,
     "created_at": 1782495422.7336648,
     "updated_by": 348641645,
-    "updated_at": 1782495423.1186733,
+    "updated_at": 1782495607.4855301,
     "sku": "Оплалал",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -988,6 +989,7 @@
     "photo_file_id": null,
     "media_message_ids": [],
     "text_message_id": 1101,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   }
 ]

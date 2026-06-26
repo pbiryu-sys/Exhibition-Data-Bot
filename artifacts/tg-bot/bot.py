@@ -615,14 +615,22 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             asyncio.ensure_future(_do_export())
 
-    # Restore keyboard via a transient message, then delete all flow clutter
-    confirm_msg = await context.bot.send_message(
+    # Delete all tracked flow messages first, then restore the main keyboard.
+    # IMPORTANT: confirm_msg must NOT be tracked — _delete_flow_msgs would erase
+    # it instantly, removing the ReplyKeyboardMarkup from the chat and freezing the UI.
+    await _delete_flow_msgs(context)
+
+    # Clear product-flow keys so they don't leak into the next conversation
+    for _key in ("factory", "exhibition", "article", "category",
+                 "price", "qty_40hq", "photo_file_id", "note",
+                 "product_photo", "_edit_product_id"):
+        context.user_data.pop(_key, None)
+
+    await context.bot.send_message(
         chat_id=chat_id,
         text="✅ Товар сохранён.",
         reply_markup=_main_keyboard(user_id),
     )
-    _track(context, confirm_msg)
-    await _delete_flow_msgs(context)
     return ConversationHandler.END
 
 
@@ -2515,6 +2523,9 @@ def main() -> None:
     edit_panel_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(edit_by_id_cb, pattern=r"^edit_"),
+            # xp_del: appears on the product card OUTSIDE the edit panel,
+            # so it must be an entry point — not just an IDLE-state handler.
+            CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_del:"),
         ],
         states={
             EditPanelState.IDLE: [

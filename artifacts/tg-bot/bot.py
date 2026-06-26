@@ -207,6 +207,33 @@ async def _reply(update: Update, *args, **kwargs) -> "Message":
 async def _reply_photo(update: Update, *args, **kwargs) -> "Message":
     return await update.message.reply_photo(*args, **kwargs)
 
+
+# ─── Flow message tracking (silent UI) ──────────────────────────────────────
+
+def _track(context: ContextTypes.DEFAULT_TYPE, msg) -> None:
+    """Record a bot message for later cleanup."""
+    if msg is not None:
+        context.user_data.setdefault("_bot_msgs", []).append(
+            (msg.chat.id, msg.message_id)
+        )
+
+
+async def _tracked_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+    """Reply and register the message for flow cleanup."""
+    msg = await _reply(update, *args, **kwargs)
+    _track(context, msg)
+    return msg
+
+
+async def _delete_flow_msgs(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Delete all tracked intermediate bot messages from the product creation flow."""
+    msgs = context.user_data.pop("_bot_msgs", [])
+    for chat_id, msg_id in msgs:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+
 ALLOWED_CATEGORIES = [
     "Беговая дорожка",
     "Велотренажер",
@@ -341,10 +368,11 @@ async def product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
     context.user_data.clear()
+    context.user_data["_bot_msgs"] = []
     context.user_data["factory"] = ctx["active_factory"]
     context.user_data["exhibition"] = ctx["active_exhibition"]
 
-    await _reply(update,
+    await _tracked_reply(update, context,
         f"📸 <b>Шаг 1/2 — Фото товара</b>\n\n"
         f"Фабрика: <b>{ctx['active_factory']}</b> | Выставка: <b>{ctx['active_exhibition']}</b>\n\n"
         "Пришлите фото или нажмите /skip чтобы пропустить.",
@@ -361,7 +389,7 @@ async def product_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         context.user_data["photo_file_id"] = update.message.photo[-1].file_id
     else:
         context.user_data["photo_file_id"] = None
-    await _reply(update,
+    await _tracked_reply(update, context,
         f"📋 <b>Шаг 2/2 — Данные товара</b>\n\n{DATA_PROMPT}",
         parse_mode=ParseMode.HTML,
         reply_markup=ReplyKeyboardRemove(),
@@ -371,7 +399,7 @@ async def product_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def product_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["photo_file_id"] = None
-    await _reply(update,
+    await _tracked_reply(update, context,
         f"📋 <b>Шаг 2/2 — Данные товара</b>\n\n{DATA_PROMPT}",
         parse_mode=ParseMode.HTML,
         reply_markup=ReplyKeyboardRemove(),
@@ -387,7 +415,7 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if len(lines) < 4:
         names = ["Артикул", "Категория", "FOB цена", "Кол-во 40HQ"]
         missing = names[len(lines):]
-        await _reply(update,
+        await _tracked_reply(update, context,
             "⚠️ Не хватает полей:\n" + "\n".join(f"• {m}" for m in missing) +
             "\n\nОтправьте данные снова, все поля в одном сообщении.",
             parse_mode=ParseMode.HTML,
@@ -406,7 +434,7 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if price <= 0:
             raise ValueError
     except ValueError:
-        await _reply(update,
+        await _tracked_reply(update, context,
             f"⚠️ Неверная FOB цена: <code>{fob_raw}</code>\n\n"
             "Введите число больше 0, например <code>85.50</code>\n\nОтправьте данные снова.",
             parse_mode=ParseMode.HTML,
@@ -419,7 +447,7 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if qty <= 0:
             raise ValueError
     except ValueError:
-        await _reply(update,
+        await _tracked_reply(update, context,
             f"⚠️ Неверное количество: <code>{qty_raw}</code>\n\n"
             "Введите целое число больше 0, например <code>500</code>\n\nОтправьте данные снова.",
             parse_mode=ParseMode.HTML,
@@ -436,7 +464,7 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     # Validate category
     if category not in ALLOWED_CATEGORIES:
-        await _reply(update,
+        await _tracked_reply(update, context,
             f"⚠️ Категория <b>{category}</b> не распознана.\n\nВыберите из списка:",
             parse_mode=ParseMode.HTML,
             reply_markup=_category_keyboard(),
@@ -451,7 +479,7 @@ async def product_category_pick(update: Update, context: ContextTypes.DEFAULT_TY
     """Handle category button selection when initial category was invalid."""
     text = update.message.text.strip()
     if text not in ALLOWED_CATEGORIES:
-        await _reply(update,
+        await _tracked_reply(update, context,
             "Пожалуйста, выберите категорию из кнопок ниже:",
             reply_markup=_category_keyboard(),
         )
@@ -528,11 +556,14 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "card_chat_id":      chat_id,
     }, updated_by=user_id)
 
-    await context.bot.send_message(
+    # Restore keyboard via a transient message, then delete all flow clutter
+    confirm_msg = await context.bot.send_message(
         chat_id=chat_id,
         text="✅ Товар сохранён.",
         reply_markup=_main_keyboard(user_id),
     )
+    _track(context, confirm_msg)
+    await _delete_flow_msgs(context)
     return ConversationHandler.END
 
 
@@ -545,6 +576,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
         except Exception:
             pass
+    # Delete any tracked product-flow messages, then restore keyboard
+    if context.user_data.get("_bot_msgs"):
+        cancel_msg = await _reply(update, "❌ Ввод отменён.", reply_markup=_main_keyboard(user_id))
+        _track(context, cancel_msg)
+        await _delete_flow_msgs(context)
     else:
         await _reply(update, "❌ Ввод отменён.", reply_markup=_main_keyboard(user_id))
     return ConversationHandler.END

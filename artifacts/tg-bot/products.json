@@ -12,8 +12,9 @@
     "note": "Вентилирует",
     "photo_file_id": "AgACAgIAAxkBAAIBtGo-QXyDn5ZWs4VFRe3VZbIchNUpAAKrF2sbV6zwSdXS6G_Gw6QWAQADAgADeQADPAQ",
     "created_by": 348641645,
-    "updated_by": null,
-    "updated_at": null
+    "updated_by": 348641645,
+    "updated_at": 1782477570.994334,
+    "status": "deleted"
   },
   {
     "id": "2cfe1281-0728-4025-a5a6-f3a809c26eb5",
@@ -28,8 +29,9 @@
     "note": "Вентилирует",
     "photo_file_id": "AgACAgIAAxkBAAIBxWo-RM4I8HJsEqlP7VJyfZJeYCERAAK0F2sbV6zwSV3Q9R1eQnyKAQADAgADeQADPAQ",
     "created_by": 348641645,
-    "updated_by": null,
-    "updated_at": null
+    "updated_by": 348641645,
+    "updated_at": 1782477566.8304133,
+    "status": "deleted"
   },
   {
     "id": "47e4a000-69bc-491b-a153-231820a0e28a",
@@ -44,15 +46,16 @@
     "note": "Жвлатвдьс",
     "photo_file_id": null,
     "created_by": 348641645,
-    "updated_by": null,
-    "updated_at": null
+    "updated_by": 348641645,
+    "updated_at": 1782477562.1347933,
+    "status": "deleted"
   },
   {
     "id": "626df7b9-e870-40bd-8183-a09658583878",
     "created_by": 348641645,
     "created_at": 1782466798.2867599,
-    "updated_by": null,
-    "updated_at": null,
+    "updated_by": 348641645,
+    "updated_at": 1782477558.030147,
     "sku": "Ааа дпгр",
     "category": "Беговая дорожка",
     "fob_usd": 1000.0,
@@ -61,14 +64,15 @@
     "factory": "Lijiujia",
     "exhibition": " CSS27",
     "note": "Плплп",
-    "photo_file_id": null
+    "photo_file_id": null,
+    "status": "deleted"
   },
   {
     "id": "4b648d86-a9c1-4d84-9ab7-ed20bad94ebd",
     "created_by": 348641645,
     "created_at": 1782466877.723399,
-    "updated_by": null,
-    "updated_at": null,
+    "updated_by": 348641645,
+    "updated_at": 1782477554.1900315,
     "sku": "Делала",
     "category": "Другое",
     "fob_usd": 1000.0,
@@ -77,14 +81,15 @@
     "factory": "Lijiujia",
     "exhibition": " CSS27",
     "note": "Тпдвлат",
-    "photo_file_id": null
+    "photo_file_id": null,
+    "status": "deleted"
   },
   {
     "id": "170a9f59-34cc-4d94-93e0-84e3f94233d4",
     "created_by": 348641645,
     "created_at": 1782467185.2175653,
-    "updated_by": null,
-    "updated_at": null,
+    "updated_by": 348641645,
+    "updated_at": 1782477549.3635526,
     "sku": "Оклада",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -101,14 +106,15 @@
         "timestamp": "2026-06-26T09:48",
         "added_by": 348641645
       }
-    ]
+    ],
+    "status": "deleted"
   },
   {
     "id": "6b7465c1-328d-42d1-af77-f624cd3a82ac",
     "created_by": 348641645,
     "created_at": 1782467796.574515,
-    "updated_by": null,
-    "updated_at": null,
+    "updated_by": 348641645,
+    "updated_at": 1782477545.3312905,
     "sku": "Оклада",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -137,14 +143,15 @@
         "timestamp": "2026-06-26T10:01",
         "added_by": 348641645
       }
-    ]
+    ],
+    "status": "deleted"
   },
   {
     "id": "a709e895-7714-42f1-9dc0-2ad2b123acae",
     "created_by": 348641645,
     "created_at": 1782468276.9929388,
-    "updated_by": null,
-    "updated_at": 1782468286.296494,
+    "updated_by": 348641645,
+    "updated_at": 1782477541.5967097,
     "sku": "АТМ6778",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -159,14 +166,15 @@
         "file_id": "AgACAgIAAxkBAAIBxWo-RM4I8HJsEqlP7VJyfZJeYCERAAK0F2sbV6zwSV3Q9R1eQnyKAQADAgADeQADPAQ",
         "timestamp": "2026-06-26T10:04"
       }
-    ]
+    ],
+    "status": "deleted"
   },
   {
     "id": "9b698154-845e-4e9b-a15a-e93fce24c4e3",
     "created_by": 348641645,
     "created_at": 1782468709.9896517,
-    "updated_by": null,
-    "updated_at": 1782468719.8032463,
+    "updated_by": 348641645,
+    "updated_at": 1782477538.0449514,
     "sku": "АТМ6778",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -181,14 +189,15 @@
         "file_id": "AgACAgIAAxkBAAIBxWo-RM4I8HJsEqlP7VJyfZJeYCERAAK0F2sbV6zwSV3Q9R1eQnyKAQADAgADeQADPAQ",
         "timestamp": "2026-06-26T10:11"
       }
-    ]
+    ],
+    "status": "deleted"
   },
   {
     "id": "8f2ca36c-2c72-4965-90f0-a01ec65fd239",
     "created_by": 348641645,
     "created_at": 1782468964.2752934,
     "updated_by": 348641645,
-    "updated_at": 1782468986.5235817,
+    "updated_at": 1782477534.4108407,
     "sku": "АТМ6778",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -214,14 +223,15 @@
       552
     ],
     "text_message_id": 553,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "592d6b42-478b-470f-9a05-ff8602d89b9f",
     "created_by": 348641645,
     "created_at": 1782469256.4831903,
     "updated_by": 348641645,
-    "updated_at": 1782469427.301963,
+    "updated_at": 1782477530.9631937,
     "sku": "АТМ6778",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -253,14 +263,15 @@
       591
     ],
     "text_message_id": 592,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "8af02453-c23f-4392-804d-c3cdfe09ca8d",
     "created_by": 348641645,
     "created_at": 1782469381.8342817,
     "updated_by": 348641645,
-    "updated_at": 1782470874.3542511,
+    "updated_at": 1782477527.4591296,
     "sku": "АТМ6778",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -292,14 +303,15 @@
       605
     ],
     "text_message_id": 606,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "8458f31a-a700-45fe-ad22-cb5b801a145a",
     "created_by": 348641645,
     "created_at": 1782470851.4314265,
     "updated_by": 348641645,
-    "updated_at": 1782471280.9643607,
+    "updated_at": 1782477523.9769256,
     "sku": "АТМ111",
     "category": "Велотренажер",
     "fob_usd": 100.0,
@@ -325,14 +337,15 @@
       609
     ],
     "text_message_id": 610,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "10a7ac9e-fb5d-412a-ad68-c75a1f574a84",
     "created_by": 348641645,
     "created_at": 1782471482.1445549,
     "updated_by": 348641645,
-    "updated_at": 1782471482.7598848,
+    "updated_at": 1782477520.3499799,
     "sku": "АТМ0001",
     "category": "Велотренажер",
     "fob_usd": 10.0,
@@ -352,14 +365,15 @@
       629
     ],
     "text_message_id": 630,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "28074be2-30af-4479-824e-2e01b685d3c2",
     "created_by": 348641645,
     "created_at": 1782471815.9175327,
     "updated_by": 348641645,
-    "updated_at": 1782471816.311134,
+    "updated_at": 1782477516.6662967,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 89.0,
@@ -371,14 +385,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 638,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "afa67acc-0301-44e5-b91b-7496703f1f5c",
     "created_by": 348641645,
     "created_at": 1782472065.2622566,
     "updated_by": 348641645,
-    "updated_at": 1782472065.4189582,
+    "updated_at": 1782477512.8035514,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 89.0,
@@ -390,14 +405,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 648,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "2078297e-efce-4709-a3d4-4e2c6a9fb84f",
     "created_by": 348641645,
     "created_at": 1782473403.0112398,
     "updated_by": 348641645,
-    "updated_at": 1782473403.494887,
+    "updated_at": 1782477508.4949582,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 89.0,
@@ -409,14 +425,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 658,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "a3071ad6-0cf2-4039-83ea-a773b0498707",
     "created_by": 348641645,
     "created_at": 1782473479.6356645,
     "updated_by": 348641645,
-    "updated_at": 1782473480.0553002,
+    "updated_at": 1782477574.781527,
     "sku": "Тест",
     "category": "Велотренажер",
     "fob_usd": 55.0,
@@ -428,14 +445,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 668,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "d5c16b41-d9a6-45a1-9717-bdfec89ddeab",
     "created_by": 348641645,
     "created_at": 1782473632.7964816,
     "updated_by": 348641645,
-    "updated_at": 1782473633.2036,
+    "updated_at": 1782477578.4411132,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 143.0,
@@ -447,14 +465,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 678,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "69f8895e-c544-40b5-8db2-fc4246be163f",
     "created_by": 348641645,
     "created_at": 1782473663.965413,
     "updated_by": 348641645,
-    "updated_at": 1782473664.1893172,
+    "updated_at": 1782477582.3680868,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 89.0,
@@ -466,14 +485,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 689,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "628e0312-9fea-4f42-965a-f65efae7851a",
     "created_by": 348641645,
     "created_at": 1782473998.4929519,
     "updated_by": 348641645,
-    "updated_at": 1782473999.1015923,
+    "updated_at": 1782477586.1628015,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 143.0,
@@ -493,14 +513,15 @@
       697
     ],
     "text_message_id": 698,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "7c7e9002-53c9-4ee3-ab76-2591e58a96b9",
     "created_by": 348641645,
     "created_at": 1782474042.9885898,
     "updated_by": 348641645,
-    "updated_at": 1782474043.1543765,
+    "updated_at": 1782477590.0995576,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 143.0,
@@ -512,14 +533,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 708,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "f1f0f10a-f447-44a6-bb2e-328ff31e5942",
     "created_by": 348641645,
     "created_at": 1782474252.3826816,
     "updated_by": 348641645,
-    "updated_at": 1782474252.810452,
+    "updated_at": 1782477594.0064273,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 143.0,
@@ -531,14 +553,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 716,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "b0cacda4-f87e-4662-961d-2ded17b42ef8",
     "created_by": 348641645,
     "created_at": 1782474298.1693141,
     "updated_by": 348641645,
-    "updated_at": 1782474298.598537,
+    "updated_at": 1782477598.011004,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 341.0,
@@ -550,14 +573,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 724,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "3a72a1a3-cfc7-46d9-9c25-deb34046d0b3",
     "created_by": 348641645,
     "created_at": 1782474351.8127003,
     "updated_by": 348641645,
-    "updated_at": 1782474352.239847,
+    "updated_at": 1782477602.1568224,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 111.0,
@@ -569,14 +593,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 732,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "d1a54f4a-60c3-4c1c-991f-3dc3822b0452",
     "created_by": 348641645,
     "created_at": 1782474474.226957,
     "updated_by": 348641645,
-    "updated_at": 1782474474.621522,
+    "updated_at": 1782477607.0153792,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 143.0,
@@ -588,14 +613,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 744,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "ce102f62-c1d4-4203-a364-18a930dbe565",
     "created_by": 348641645,
     "created_at": 1782474762.8966892,
     "updated_by": 348641645,
-    "updated_at": 1782474763.4092107,
+    "updated_at": 1782477503.9862268,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 143.0,
@@ -607,14 +633,15 @@
     "hero_media": [],
     "media_message_ids": [],
     "text_message_id": 752,
-    "card_chat_id": 348641645
+    "card_chat_id": 348641645,
+    "status": "deleted"
   },
   {
     "id": "ab1d663f-4c78-4c4e-9e8a-bcef093ac65a",
     "created_by": 348641645,
     "created_at": 1782474854.83732,
     "updated_by": 348641645,
-    "updated_at": 1782474922.7348244,
+    "updated_at": 1782477496.8212836,
     "sku": "АТМ000",
     "category": "Велотренажер",
     "fob_usd": 100.0,
@@ -640,6 +667,40 @@
       772
     ],
     "text_message_id": 773,
+    "card_chat_id": 348641645,
+    "status": "deleted"
+  },
+  {
+    "id": "ba606450-152d-474f-879e-30804e84abb8",
+    "created_by": 348641645,
+    "created_at": 1782477819.7780216,
+    "updated_by": 348641645,
+    "updated_at": 1782477882.1314623,
+    "sku": "КОНДЕЙ200",
+    "category": "Другое",
+    "fob_usd": 116.0,
+    "qty_40hq": 1024,
+    "kz_price": 181375.9,
+    "factory": "ZXCH",
+    "exhibition": "СSS 2027",
+    "note": "Плохой кондей",
+    "hero_media": [
+      {
+        "type": "photo",
+        "file_id": "AgACAgIAAxkBAAIBxWo-RM4I8HJsEqlP7VJyfZJeYCERAAK0F2sbV6zwSV3Q9R1eQnyKAQADAgADeQADPAQ",
+        "timestamp": "2026-06-26T12:43"
+      },
+      {
+        "type": "video",
+        "file_id": "BAACAgIAAxkBAAICJmo-UXmoy-_YapYUmECQQmKp4KTXAAK7mAACV6zwSSlhJXLRtW2IPAQ",
+        "timestamp": "2026-06-26T12:44"
+      }
+    ],
+    "media_message_ids": [
+      838,
+      839
+    ],
+    "text_message_id": 840,
     "card_chat_id": 348641645
   }
 ]

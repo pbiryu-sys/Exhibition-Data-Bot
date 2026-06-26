@@ -1,1 +1,18 @@
-{}
+{
+  "348641645": {
+    "factories": [
+      "Lijiujia"
+    ],
+    "exhibitions": [
+      {
+        "name": "CF26",
+        "year": null
+      }
+    ],
+    "active_factory": "Lijiujia",
+    "active_exhibition": "CF26",
+    "message_ids": [
+      327
+    ]
+  }
+}

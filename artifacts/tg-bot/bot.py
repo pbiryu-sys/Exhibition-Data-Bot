@@ -35,6 +35,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Module-level list; populated in main() so clear_history can reset FSM state.
+_conv_handlers: list = []
+
 ALLOWED_CATEGORIES = [
     "Беговая дорожка",
     "Велотренажер",
@@ -127,23 +130,32 @@ async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # Delete all tracked product card messages from the chat
+    # 1. Delete all tracked product card messages from the chat
     message_ids = get_message_ids(user_id)
-    deleted = 0
     for msg_id in message_ids:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            deleted += 1
         except Exception:
             pass  # Already deleted, too old (>48h), or no permission — skip silently
 
-    clear_message_ids(user_id)   # wipe message ID registry (keeps factories/exhibitions)
-    context.user_data.clear()    # clear any in-progress session state
+    # 2. Wipe persistent product history (keeps factories/exhibitions/active context)
+    clear_message_ids(user_id)
 
-    ctx = load_user_context(user_id)
+    # 3. Reset every ConversationHandler's FSM state for this user.
+    #    Default key scheme: (chat_id, user_id)  [per_chat=True, per_user=True]
+    fsm_key = (chat_id, user_id)
+    for handler in _conv_handlers:
+        try:
+            handler._conversations.pop(fsm_key, None)
+        except Exception:
+            pass
+
+    # 4. Clear all in-memory session buffers
+    context.user_data.clear()
+    context.chat_data.clear()
+
     await update.message.reply_text(
-        "История очищена.",
-        reply_markup=_main_keyboard(ctx),
+        "История полностью очищена. Нажмите /start",
     )
 
 
@@ -988,6 +1000,16 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
     )
+
+    # Populate the module-level registry so clear_history can reset FSM state.
+    _conv_handlers.extend([
+        product_conv,
+        factory_conv,
+        factory_mgmt_conv,
+        exhibition_conv,
+        exhibition_mgmt_conv,
+        settings_conv,
+    ])
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^🗑 Очистить историю$"), clear_history))

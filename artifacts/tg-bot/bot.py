@@ -2053,8 +2053,9 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if not google_export.is_configured():
             await query.answer("⚠️ Google-интеграция не настроена.", show_alert=True)
             return CatalogState.MENU
-        all_products = get_products()
+        all_products = get_active_products()  # same dataset the catalog shows — no deleted/hidden
         total = len(all_products)
+        logger.info("BULK EXPORT: ACTIVE PRODUCTS COUNT = %d", total)
         if total == 0:
             await query.answer("📦 Нет товаров для экспорта.", show_alert=True)
             return CatalogState.MENU

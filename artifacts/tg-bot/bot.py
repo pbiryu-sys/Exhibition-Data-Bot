@@ -199,7 +199,7 @@ def _catalog_keyboard(index: int, total: int, p: dict) -> InlineKeyboardMarkup:
 
 async def catalog_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    products = get_products(user_id)
+    products = get_products()
     ctx = load_user_context(user_id)
 
     if not products:
@@ -228,7 +228,7 @@ async def catalog_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if data == "cnoop":
         return
 
-    products = get_products(user_id)
+    products = get_products()
 
     if data.startswith("cprev:") or data.startswith("cnext:"):
         index = int(data.split(":")[1])
@@ -245,8 +245,8 @@ async def catalog_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     elif data.startswith("cdel:"):
         _, pid, curr = data.split(":")
-        delete_product(user_id, pid)
-        products = get_products(user_id)
+        delete_product(pid, deleted_by=user_id)
+        products = get_products()
         if not products:
             await query.edit_message_text("📚 <b>Каталог пуст.</b>", parse_mode=ParseMode.HTML)
             return
@@ -260,7 +260,7 @@ async def catalog_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     elif data.startswith("cphoto:"):
         pid = data.split(":")[1]
-        p = get_product(user_id, pid)
+        p = get_product(pid)
         if p and p.get("photo_file_id"):
             await query.message.reply_photo(photo=p["photo_file_id"])
         else:
@@ -275,7 +275,7 @@ async def catalog_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = update.effective_user.id
     pid = query.data.split(":", 1)[1]
 
-    p = get_product(user_id, pid)
+    p = get_product(pid)
     if not p:
         await query.answer("Товар не найден", show_alert=True)
         return ConversationHandler.END
@@ -306,7 +306,7 @@ async def catalog_edit_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def catalog_edit_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     pid = context.user_data.get("_edit_product_id")
-    existing = get_product(update.effective_user.id, pid) if pid else None
+    existing = get_product(pid) if pid else None
     context.user_data["photo_file_id"] = existing.get("photo_file_id") if existing else None
     await _reply(update,
         f"📋 <b>Данные товара</b>\n\n{DATA_PROMPT}",
@@ -570,9 +570,9 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "photo_file_id": data.get("photo_file_id"),
     }
     if edit_pid:
-        update_product(user_id, edit_pid, product_record)
+        update_product(edit_pid, product_record, updated_by=user_id)
     else:
-        save_product(user_id, product_record)
+        save_product(product_record, created_by=user_id)
 
     ctx = load_user_context(user_id)
     reply_markup = _main_keyboard(ctx)
@@ -641,7 +641,7 @@ def _fp_text(user_id: int) -> str:
 
 def _fp_keyboard(user_id: int) -> InlineKeyboardMarkup:
     ctx       = load_user_context(user_id)
-    factories = get_factories(user_id)
+    factories = get_factories()
     rows = []
     for i, f in enumerate(factories):
         mark = "✅ " if f == ctx["active_factory"] else ""
@@ -672,7 +672,7 @@ async def factory_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data.startswith("fp_sel:"):
         idx = int(data.split(":")[1])
-        factories = get_factories(user_id)
+        factories = get_factories()
         if 0 <= idx < len(factories):
             ctx = load_user_context(user_id)
             save_user_context(user_id, factories[idx], ctx["active_exhibition"])
@@ -683,7 +683,7 @@ async def factory_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data.startswith("fp_del:"):
         idx = int(data.split(":")[1])
-        delete_factory(user_id, idx)
+        delete_factory(idx)
         await query.edit_message_text(
             _fp_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_fp_keyboard(user_id)
         )
@@ -717,7 +717,7 @@ async def factory_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def factory_panel_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     name    = update.message.text.strip()
     user_id = update.effective_user.id
-    add_factory(user_id, name)
+    add_factory(name, added_by=user_id)
     ctx = load_user_context(user_id)
     save_user_context(user_id, name, ctx["active_exhibition"])
     await _panel_edit(context, _fp_text(user_id), _fp_keyboard(user_id))
@@ -734,7 +734,7 @@ def _ep_text(user_id: int) -> str:
 
 def _ep_keyboard(user_id: int) -> InlineKeyboardMarkup:
     ctx         = load_user_context(user_id)
-    exhibitions = get_exhibitions(user_id)
+    exhibitions = get_exhibitions()
     rows = []
     for i, ex in enumerate(exhibitions):
         disp = exhibition_display(ex)
@@ -766,7 +766,7 @@ async def exhibition_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data.startswith("ep_sel:"):
         idx = int(data.split(":")[1])
-        exhibitions = get_exhibitions(user_id)
+        exhibitions = get_exhibitions()
         if 0 <= idx < len(exhibitions):
             disp = exhibition_display(exhibitions[idx])
             ctx  = load_user_context(user_id)
@@ -778,7 +778,7 @@ async def exhibition_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data.startswith("ep_del:"):
         idx = int(data.split(":")[1])
-        delete_exhibition(user_id, idx)
+        delete_exhibition(idx)
         await query.edit_message_text(
             _ep_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_ep_keyboard(user_id)
         )
@@ -802,7 +802,7 @@ async def exhibition_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data == "ep_skip_year":
         name = context.user_data.get("_new_ex_name", "")
-        add_exhibition(user_id, name, None)
+        add_exhibition(name, None, added_by=user_id)
         disp = exhibition_display({"name": name, "year": None})
         ctx  = load_user_context(user_id)
         save_user_context(user_id, ctx["active_factory"], disp)
@@ -839,7 +839,7 @@ async def exhibition_panel_add_year(update: Update, context: ContextTypes.DEFAUL
     year    = update.message.text.strip() or None
     name    = context.user_data.get("_new_ex_name", "")
     user_id = update.effective_user.id
-    add_exhibition(user_id, name, year)
+    add_exhibition(name, year, added_by=user_id)
     disp = exhibition_display({"name": name, "year": year})
     ctx  = load_user_context(user_id)
     save_user_context(user_id, ctx["active_factory"], disp)
@@ -1003,7 +1003,7 @@ async def attachment_panel_open(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     pid     = query.data.split(":", 1)[1]
 
-    p = get_product(user_id, pid)
+    p = get_product(pid)
     if not p:
         await query.answer("Товар не найден", show_alert=True)
         return ConversationHandler.END
@@ -1030,8 +1030,8 @@ async def attachment_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
         parts   = data.split(":")       # ap_del, pid, idx
         del_pid = parts[1]
         idx     = int(parts[2])
-        delete_attachment(user_id, del_pid, idx)
-        p = get_product(user_id, del_pid)
+        delete_attachment(del_pid, idx)
+        p = get_product(del_pid)
         if p:
             await query.edit_message_text(
                 _ap_text(p), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(p)
@@ -1053,7 +1053,7 @@ async def attachment_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data.startswith("ap_cadd:"):
         pid = data.split(":", 1)[1]
-        p   = get_product(user_id, pid)
+        p   = get_product(pid)
         if p:
             await query.edit_message_text(
                 _ap_text(p), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(p)
@@ -1090,8 +1090,8 @@ async def attachment_panel_receive(update: Update, context: ContextTypes.DEFAULT
         )
         return AttachmentPanelState.ADDING
 
-    add_attachment(user_id, pid, attachment)
-    p = get_product(user_id, pid)
+    add_attachment(pid, attachment)
+    p = get_product(pid)
     if p:
         await _attach_edit(context, _ap_text(p), _ap_keyboard(p))
     return AttachmentPanelState.IDLE

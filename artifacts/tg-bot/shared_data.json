@@ -1,0 +1,28 @@
+{
+  "factories": [
+    "Lijiujia",
+    "Evertop",
+    "Yeekang",
+    "Dapao",
+    "RH Fitness",
+    "DDS",
+    "Sunlink",
+    "Kingline",
+    "Transtar Fitness",
+    "Very Sports",
+    "Lucky Stars",
+    "Ope Sport",
+    "ZXCH",
+    "Ypoo"
+  ],
+  "exhibitions": [
+    {
+      "name": "CF26",
+      "year": null
+    },
+    {
+      "name": "",
+      "year": "CSS27"
+    }
+  ]
+}

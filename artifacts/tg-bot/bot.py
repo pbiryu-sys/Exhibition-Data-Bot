@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from states import ProductState, CatalogEditState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState, AttachmentPanelState
+from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState
 from pricing import load_settings, save_settings, calculate_cost_per_unit
 from formatters import format_product_card, format_settings
 from context_store import (
@@ -102,7 +102,7 @@ def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
         [
             [KeyboardButton("➕ Новый товар")],
             [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
-            [KeyboardButton("📚 Каталог"), KeyboardButton("⚙️ Настройки")],
+            [KeyboardButton("✏️ Редактировать"), KeyboardButton("⚙️ Настройки")],
         ],
         resize_keyboard=True,
     )
@@ -134,251 +134,6 @@ def _main_menu_text(ctx: dict) -> str:
         f"🏭 Активная фабрика: <b>{factory}</b>"
         f"{hint}"
     )
-
-
-# ─── Catalog helpers ────────────────────────────────────────────────────────
-
-def _catalog_text(p: dict, index: int, total: int) -> str:
-    from datetime import datetime
-    dt = datetime.fromtimestamp(p.get("created_at", 0)).strftime("%d.%m.%Y")
-    photo_line = "📸 <b>Фото:</b> есть" if p.get("photo_file_id") else ""
-    note = p.get("note") or "—"
-    attachments = p.get("attachments", [])
-    lines = [
-        f"📦 <b>{p['sku']}</b>",
-        f"🏷 {p['category']}",
-        f"🏭 {p['factory']}",
-        f"🎪 {p['exhibition']}",
-        "",
-        f"💵 FOB: <b>${p['fob_usd']:,.2f}</b> · {p['qty_40hq']:,} шт / 40HQ",
-        f"💴 KZ цена: <b>₸{p['kz_price']:,.0f}</b>",
-        f"📝 {note}",
-    ]
-    if photo_line:
-        lines.append(photo_line)
-    if attachments:
-        last = attachments[-1]
-        emoji = {"photo": "📸", "video": "📹", "note": "📝"}.get(last["type"], "📎")
-        preview = f'"{last["text"][:25]}"' if last["type"] == "note" else last["timestamp"][:10]
-        lines.append(f"📎 Вложений: <b>{len(attachments)}</b> · {emoji} {preview}")
-    lines += ["", f"📅 {dt}   <i>{index + 1} из {total}</i>"]
-    return "\n".join(lines)
-
-
-def _catalog_keyboard(index: int, total: int, p: dict) -> InlineKeyboardMarkup:
-    pid = p["id"]
-    prev_i = (index - 1) % total
-    next_i = (index + 1) % total
-
-    if total > 1:
-        nav_row = [
-            InlineKeyboardButton("⬅️", callback_data=f"cprev:{prev_i}"),
-            InlineKeyboardButton(f"{index + 1} / {total}", callback_data="cnoop"),
-            InlineKeyboardButton("➡️", callback_data=f"cnext:{next_i}"),
-        ]
-    else:
-        nav_row = [InlineKeyboardButton("1 / 1", callback_data="cnoop")]
-
-    attach_count = len(p.get("attachments", []))
-    attach_label = f"📎 Вложения ({attach_count})" if attach_count else "📎 Добавить вложение"
-
-    rows = [
-        nav_row,
-        [
-            InlineKeyboardButton("✏️ Изменить", callback_data=f"cedit:{pid}"),
-            InlineKeyboardButton("🗑 Удалить",   callback_data=f"cdel:{pid}:{index}"),
-        ],
-        [InlineKeyboardButton(attach_label, callback_data=f"ap_open:{pid}")],
-    ]
-    if p.get("photo_file_id"):
-        rows.append([InlineKeyboardButton("📸 Показать фото", callback_data=f"cphoto:{pid}")])
-    return InlineKeyboardMarkup(rows)
-
-
-# ─── Catalog handlers ────────────────────────────────────────────────────────
-
-async def catalog_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    products = get_products()
-    ctx = load_user_context(user_id)
-
-    if not products:
-        await _reply(update,
-            "📚 <b>Каталог пуст.</b>\n\nДобавьте товар через «➕ Новый товар».",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_main_keyboard(ctx),
-        )
-        return
-
-    index = 0
-    p = products[index]
-    await update.message.reply_text(
-        _catalog_text(p, index, len(products)),
-        parse_mode=ParseMode.HTML,
-        reply_markup=_catalog_keyboard(index, len(products), p),
-    )
-
-
-async def catalog_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    user_id = update.effective_user.id
-    data = query.data
-
-    if data == "cnoop":
-        return
-
-    products = get_products()
-
-    if data.startswith("cprev:") or data.startswith("cnext:"):
-        index = int(data.split(":")[1])
-        if not products:
-            await query.edit_message_text("📚 Каталог пуст.", parse_mode=ParseMode.HTML)
-            return
-        index = max(0, min(index, len(products) - 1))
-        p = products[index]
-        await query.edit_message_text(
-            _catalog_text(p, index, len(products)),
-            parse_mode=ParseMode.HTML,
-            reply_markup=_catalog_keyboard(index, len(products), p),
-        )
-
-    elif data.startswith("cdel:"):
-        _, pid, curr = data.split(":")
-        delete_product(pid, deleted_by=user_id)
-        products = get_products()
-        if not products:
-            await query.edit_message_text("📚 <b>Каталог пуст.</b>", parse_mode=ParseMode.HTML)
-            return
-        index = min(int(curr), len(products) - 1)
-        p = products[index]
-        await query.edit_message_text(
-            _catalog_text(p, index, len(products)),
-            parse_mode=ParseMode.HTML,
-            reply_markup=_catalog_keyboard(index, len(products), p),
-        )
-
-    elif data.startswith("cphoto:"):
-        pid = data.split(":")[1]
-        p = get_product(pid)
-        if p and p.get("photo_file_id"):
-            await query.message.reply_photo(photo=p["photo_file_id"])
-        else:
-            await query.answer("Фото не найдено", show_alert=True)
-
-
-# ─── Catalog edit conversation ───────────────────────────────────────────────
-
-async def catalog_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    user_id = update.effective_user.id
-    pid = query.data.split(":", 1)[1]
-
-    p = get_product(pid)
-    if not p:
-        await query.answer("Товар не найден", show_alert=True)
-        return ConversationHandler.END
-
-    context.user_data.clear()
-    context.user_data["_edit_product_id"] = pid
-    context.user_data["factory"]    = p["factory"]
-    context.user_data["exhibition"] = p["exhibition"]
-
-    await query.message.reply_text(
-        f"✏️ <b>Редактирование: {p['sku']}</b>\n\n"
-        "Отправьте новое фото или /skip чтобы оставить прежнее.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return CatalogEditState.PHOTO
-
-
-async def catalog_edit_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["photo_file_id"] = update.message.photo[-1].file_id
-    await _reply(update,
-        f"📋 <b>Данные товара</b>\n\n{DATA_PROMPT}",
-        parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return CatalogEditState.DATA
-
-
-async def catalog_edit_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    pid = context.user_data.get("_edit_product_id")
-    existing = get_product(pid) if pid else None
-    context.user_data["photo_file_id"] = existing.get("photo_file_id") if existing else None
-    await _reply(update,
-        f"📋 <b>Данные товара</b>\n\n{DATA_PROMPT}",
-        parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return CatalogEditState.DATA
-
-
-async def catalog_edit_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    lines = [l.strip() for l in update.message.text.strip().splitlines() if l.strip()]
-
-    if len(lines) < 4:
-        names = ["Артикул", "Категория", "FOB цена", "Кол-во 40HQ"]
-        missing = names[len(lines):]
-        await _reply(update,
-            "⚠️ Не хватает полей:\n" + "\n".join(f"• {m}" for m in missing) +
-            "\n\nОтправьте данные снова.",
-            parse_mode=ParseMode.HTML,
-        )
-        return CatalogEditState.DATA
-
-    article  = lines[0]
-    category = lines[1]
-    fob_raw  = lines[2]
-    qty_raw  = lines[3]
-    note     = " ".join(lines[4:]) if len(lines) > 4 else "—"
-
-    try:
-        price = float(fob_raw.replace(",", ".").replace(" ", ""))
-        if price <= 0:
-            raise ValueError
-    except ValueError:
-        await _reply(update,
-            f"⚠️ Неверная FOB цена: <code>{fob_raw}</code>\n\nОтправьте данные снова.",
-            parse_mode=ParseMode.HTML,
-        )
-        return CatalogEditState.DATA
-
-    try:
-        qty = int(qty_raw.replace(" ", "").replace(",", ""))
-        if qty <= 0:
-            raise ValueError
-    except ValueError:
-        await _reply(update,
-            f"⚠️ Неверное количество: <code>{qty_raw}</code>\n\nОтправьте данные снова.",
-            parse_mode=ParseMode.HTML,
-        )
-        return CatalogEditState.DATA
-
-    context.user_data.update({"article": article, "price": price, "qty_40hq": qty, "note": note})
-
-    if category not in ALLOWED_CATEGORIES:
-        await _reply(update,
-            f"⚠️ Категория <b>{category}</b> не распознана.\n\nВыберите из списка:",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_category_keyboard(),
-        )
-        return CatalogEditState.CATEGORY_PICK
-
-    context.user_data["category"] = category
-    return await finish_product(update, context)
-
-
-async def catalog_edit_category_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    if text not in ALLOWED_CATEGORIES:
-        await _reply(update, "Выберите категорию из кнопок:", reply_markup=_category_keyboard())
-        return CatalogEditState.CATEGORY_PICK
-    context.user_data["category"] = text
-    return await finish_product(update, context)
-
 
 # ─── /start ────────────────────────────────────────────────────────────────
 
@@ -571,8 +326,12 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     }
     if edit_pid:
         update_product(edit_pid, product_record, updated_by=user_id)
+        saved_id = edit_pid
     else:
-        save_product(product_record, created_by=user_id)
+        saved = save_product(product_record, created_by=user_id)
+        saved_id = saved["id"]
+
+    context.user_data["_last_product_id"] = saved_id
 
     ctx = load_user_context(user_id)
     reply_markup = _main_keyboard(ctx)
@@ -936,15 +695,58 @@ async def settings_panel_edit_value(update: Update, context: ContextTypes.DEFAUL
     return SettingsPanelState.IDLE
 
 
-# ─── Attachment panel ────────────────────────────────────────────────────────
+# ─── Edit panel ──────────────────────────────────────────────────────────────
 
-async def _attach_edit(
+def _xp_text(p: dict) -> str:
+    from datetime import datetime
+    dt  = datetime.fromtimestamp(p.get("created_at", 0)).strftime("%d.%m.%Y")
+    att = p.get("attachments", [])
+    lines = [
+        f"✏️ <b>{p.get('sku', '—')}</b> — {p.get('category', '—')}",
+        f"🏭 {p.get('factory', '—')}  ·  🎪 {p.get('exhibition', '—')}",
+        f"💵 FOB: <b>${p.get('fob_usd', 0):,.2f}</b>  ·  {p.get('qty_40hq', 0):,} шт / 40HQ",
+        f"💴 KZ цена: <b>₸{int(p.get('kz_price', 0)):,}</b>".replace(",", " "),
+    ]
+    note = p.get("note") or "—"
+    if note and note != "—":
+        lines.append(f"📝 {note}")
+    lines.append(f"📅 {dt}")
+    if att:
+        last  = att[-1]
+        emoji = {"photo": "📸", "video": "📹", "note": "📝"}.get(last["type"], "📎")
+        lines.append(f"📎 Вложений: {len(att)} · {emoji} последнее")
+    if p.get("updated_at"):
+        upd = datetime.fromtimestamp(p["updated_at"]).strftime("%d.%m.%Y %H:%M")
+        lines.append(f"<i>Изменён: {upd}</i>")
+    return "\n".join(lines)
+
+
+def _xp_keyboard(pid: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📸 Фото",    callback_data=f"xp_photo:{pid}"),
+            InlineKeyboardButton("📹 Видео",   callback_data=f"xp_video:{pid}"),
+            InlineKeyboardButton("📝 Заметка", callback_data=f"xp_note:{pid}"),
+        ],
+        [
+            InlineKeyboardButton("🏷 Категория", callback_data=f"xp_cat:{pid}"),
+            InlineKeyboardButton("💰 Цена FOB",  callback_data=f"xp_price:{pid}"),
+        ],
+        [
+            InlineKeyboardButton("🏭 Завод",    callback_data=f"xp_factory:{pid}"),
+            InlineKeyboardButton("🎪 Выставка", callback_data=f"xp_exh:{pid}"),
+        ],
+        [InlineKeyboardButton("✖️ Закрыть", callback_data=f"xp_done:{pid}")],
+    ])
+
+
+async def _xp_edit(
     context: ContextTypes.DEFAULT_TYPE,
     text: str,
     keyboard: InlineKeyboardMarkup | None = None,
 ) -> None:
-    msg_id  = context.user_data.get("_attach_msg_id")
-    chat_id = context.user_data.get("_attach_chat_id")
+    msg_id  = context.user_data.get("_xp_msg_id")
+    chat_id = context.user_data.get("_xp_chat_id")
     if msg_id and chat_id:
         try:
             await context.bot.edit_message_text(
@@ -958,143 +760,294 @@ async def _attach_edit(
             pass
 
 
-def _ap_text(p: dict) -> str:
-    sku         = p.get("sku", "—")
-    attachments = p.get("attachments", [])
-    lines = [f"📎 <b>Вложения — {sku}</b>"]
-    if not attachments:
-        lines.append("\nВложений пока нет.")
-    else:
-        lines.append(f"\n<i>Всего: {len(attachments)}</i>\n")
-        for i, a in enumerate(attachments, 1):
-            ts = a.get("timestamp", "")[:10]
-            if a["type"] == "photo":
-                lines.append(f"{i}. 📸 Фото · {ts}")
-            elif a["type"] == "video":
-                lines.append(f"{i}. 📹 Видео · {ts}")
-            elif a["type"] == "note":
-                preview = a.get("text", "")[:50]
-                lines.append(f'{i}. 📝 "{preview}" · {ts}')
-    return "\n".join(lines)
+def _resolve_edit_pid(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str | None:
+    """Return the product ID to edit: last session product → last by this user → newest overall."""
+    pid = context.user_data.get("_last_product_id")
+    if pid and get_product(pid):
+        return pid
+    products = sorted(get_products(), key=lambda x: x.get("created_at", 0), reverse=True)
+    for p in products:
+        if p.get("created_by") == user_id:
+            return p["id"]
+    return products[0]["id"] if products else None
 
 
-def _ap_keyboard(p: dict) -> InlineKeyboardMarkup:
-    pid         = p["id"]
-    attachments = p.get("attachments", [])
-    rows = []
-    for i, a in enumerate(attachments):
-        emoji = {"photo": "📸", "video": "📹", "note": "📝"}.get(a["type"], "📎")
-        ts    = a.get("timestamp", "")[:10]
-        label = f"{emoji} {ts}"
-        if a["type"] == "note":
-            label += f': {a.get("text", "")[:20]}'
-        rows.append([
-            InlineKeyboardButton(label,  callback_data="ap_nop"),
-            InlineKeyboardButton("🗑",   callback_data=f"ap_del:{pid}:{i}"),
-        ])
-    rows.append([InlineKeyboardButton("➕ Добавить вложение", callback_data=f"ap_add:{pid}")])
-    rows.append([InlineKeyboardButton("✖️ Закрыть",           callback_data=f"ap_done:{pid}")])
-    return InlineKeyboardMarkup(rows)
-
-
-async def attachment_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query   = update.callback_query
-    await query.answer()
+async def edit_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
-    pid     = query.data.split(":", 1)[1]
 
-    p = get_product(pid)
+    # Optional: /edit SKU  or  /edit  (no arg)
+    pid = None
+    if update.message and update.message.text:
+        parts = update.message.text.strip().split(maxsplit=1)
+        if len(parts) > 1:
+            sku      = parts[1].strip()
+            products = get_products()
+            match    = next((x for x in products if x.get("sku", "").lower() == sku.lower()), None)
+            if match:
+                pid = match["id"]
+            else:
+                await update.message.reply_text(
+                    f"⚠️ Товар с артикулом <b>{sku}</b> не найден.",
+                    parse_mode=ParseMode.HTML,
+                )
+                return ConversationHandler.END
+
+    if not pid:
+        pid = _resolve_edit_pid(context, user_id)
+
+    p = get_product(pid) if pid else None
     if not p:
-        await query.answer("Товар не найден", show_alert=True)
+        await update.message.reply_text(
+            "📭 <b>Нет товаров для редактирования.</b>\n\n"
+            "Создайте товар через «➕ Новый товар».",
+            parse_mode=ParseMode.HTML,
+        )
         return ConversationHandler.END
 
-    context.user_data["_attach_pid"] = pid
-    sent = await query.message.reply_text(
-        _ap_text(p), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(p)
+    context.user_data["_xp_pid"] = p["id"]
+    sent = await update.message.reply_text(
+        _xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(p["id"])
     )
-    context.user_data["_attach_msg_id"]  = sent.message_id
-    context.user_data["_attach_chat_id"] = query.message.chat_id
-    return AttachmentPanelState.IDLE
+    context.user_data["_xp_msg_id"]  = sent.message_id
+    context.user_data["_xp_chat_id"] = update.effective_chat.id
+    return EditPanelState.IDLE
 
 
-async def attachment_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query   = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
     data    = query.data
 
-    if data == "ap_nop":
-        return AttachmentPanelState.IDLE
+    pid = data.split(":", 1)[1] if ":" in data else context.user_data.get("_xp_pid", "")
+    context.user_data["_xp_pid"] = pid
 
-    if data.startswith("ap_del:"):
-        parts   = data.split(":")       # ap_del, pid, idx
-        del_pid = parts[1]
-        idx     = int(parts[2])
-        delete_attachment(del_pid, idx)
-        p = get_product(del_pid)
-        if p:
-            await query.edit_message_text(
-                _ap_text(p), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(p)
-            )
-        return AttachmentPanelState.IDLE
+    cancel_kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Отмена", callback_data=f"xp_cancel:{pid}")]]
+    )
 
-    if data.startswith("ap_add:"):
-        pid = data.split(":", 1)[1]
-        context.user_data["_attach_pid"] = pid
+    if data.startswith("xp_photo:"):
         await query.edit_message_text(
-            "📎 <b>Добавить вложение</b>\n\nОтправьте:\n"
-            "• 📸 фото\n• 📹 видео\n• 📝 текстовую заметку",
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("❌ Отмена", callback_data=f"ap_cadd:{pid}")]]
-            ),
+            "📸 <b>Добавить фото</b>\n\nОтправьте фото товара:",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
         )
-        return AttachmentPanelState.ADDING
+        return EditPanelState.ADDING_PHOTO
 
-    if data.startswith("ap_cadd:"):
-        pid = data.split(":", 1)[1]
+    if data.startswith("xp_video:"):
+        await query.edit_message_text(
+            "📹 <b>Добавить видео</b>\n\nОтправьте видео:",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return EditPanelState.ADDING_VIDEO
+
+    if data.startswith("xp_note:"):
+        await query.edit_message_text(
+            "📝 <b>Добавить заметку</b>\n\nВведите текст:",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return EditPanelState.ADDING_NOTE
+
+    if data.startswith("xp_cat:"):
         p   = get_product(pid)
+        cat = p.get("category", "—") if p else "—"
+        await query.edit_message_text(
+            f"🏷 <b>Категория</b>\n\nТекущая: <b>{cat}</b>\n\nВведите новую:",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return EditPanelState.EDITING_CAT
+
+    if data.startswith("xp_price:"):
+        p = get_product(pid)
         if p:
             await query.edit_message_text(
-                _ap_text(p), parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(p)
+                f"💰 <b>Цена FOB</b>\n\n"
+                f"Текущая: <b>${p.get('fob_usd', 0):,.2f}</b>  ·  {p.get('qty_40hq', 0):,} шт\n\n"
+                "Введите новую цену FOB в USD:",
+                parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
             )
-        return AttachmentPanelState.IDLE
+        return EditPanelState.EDITING_PRICE
 
-    if data.startswith("ap_done:"):
-        await query.edit_message_text("📎 Вложения сохранены.")
+    if data.startswith("xp_factory:"):
+        p        = get_product(pid)
+        current  = p.get("factory", "—") if p else "—"
+        factories = get_factories()
+        rows = []
+        for i, f in enumerate(factories):
+            mark = "✅ " if f == current else ""
+            rows.append([InlineKeyboardButton(f"{mark}{f}", callback_data=f"xp_fsel:{pid}:{i}")])
+        rows.append([InlineKeyboardButton("✏️ Ввести вручную", callback_data=f"xp_finput:{pid}")])
+        rows.append([InlineKeyboardButton("❌ Отмена",         callback_data=f"xp_cancel:{pid}")])
+        await query.edit_message_text(
+            f"🏭 <b>Завод</b>\n\nТекущий: <b>{current}</b>\n\nВыберите или введите:",
+            parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return EditPanelState.EDITING_FACT
+
+    if data.startswith("xp_fsel:"):
+        parts   = data.split(":")
+        idx     = int(parts[2])
+        factories = get_factories()
+        if 0 <= idx < len(factories):
+            update_product(pid, {"factory": factories[idx]}, updated_by=user_id)
+        p = get_product(pid)
+        if p:
+            await query.edit_message_text(_xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid))
+        return EditPanelState.IDLE
+
+    if data.startswith("xp_finput:"):
+        await query.edit_message_text(
+            "🏭 <b>Завод</b>\n\nВведите название завода:",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return EditPanelState.EDITING_FACT
+
+    if data.startswith("xp_exh:"):
+        p           = get_product(pid)
+        current     = p.get("exhibition", "—") if p else "—"
+        exhibitions = get_exhibitions()
+        rows = []
+        for i, ex in enumerate(exhibitions):
+            disp = exhibition_display(ex)
+            mark = "✅ " if disp == current else ""
+            rows.append([InlineKeyboardButton(f"{mark}{disp}", callback_data=f"xp_esel:{pid}:{i}")])
+        rows.append([InlineKeyboardButton("✏️ Ввести вручную", callback_data=f"xp_einput:{pid}")])
+        rows.append([InlineKeyboardButton("❌ Отмена",          callback_data=f"xp_cancel:{pid}")])
+        await query.edit_message_text(
+            f"🎪 <b>Выставка</b>\n\nТекущая: <b>{current}</b>\n\nВыберите или введите:",
+            parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return EditPanelState.EDITING_EXH
+
+    if data.startswith("xp_esel:"):
+        parts       = data.split(":")
+        idx         = int(parts[2])
+        exhibitions = get_exhibitions()
+        if 0 <= idx < len(exhibitions):
+            update_product(pid, {"exhibition": exhibition_display(exhibitions[idx])}, updated_by=user_id)
+        p = get_product(pid)
+        if p:
+            await query.edit_message_text(_xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid))
+        return EditPanelState.IDLE
+
+    if data.startswith("xp_einput:"):
+        await query.edit_message_text(
+            "🎪 <b>Выставка</b>\n\nВведите название выставки:",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return EditPanelState.EDITING_EXH
+
+    if data.startswith("xp_cancel:"):
+        p = get_product(pid)
+        if p:
+            await query.edit_message_text(_xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid))
+        return EditPanelState.IDLE
+
+    if data.startswith("xp_done:"):
+        await query.edit_message_text("✅ Редактирование завершено.")
         return ConversationHandler.END
 
-    return AttachmentPanelState.IDLE
+    return EditPanelState.IDLE
 
 
-async def attachment_panel_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    from datetime import datetime
-    pid     = context.user_data.get("_attach_pid", "")
-    user_id = update.effective_user.id
-    ts      = datetime.now().strftime("%Y-%m-%dT%H:%M")
-
-    if update.message.photo:
-        attachment = {"type": "photo", "file_id": update.message.photo[-1].file_id, "timestamp": ts}
-    elif update.message.video:
-        attachment = {"type": "video", "file_id": update.message.video.file_id, "timestamp": ts}
-    elif update.message.text:
-        attachment = {"type": "note", "text": update.message.text.strip(), "timestamp": ts}
-    else:
-        await _attach_edit(
-            context,
-            "📎 <b>Добавить вложение</b>\n\n"
-            "⚠️ Поддерживаются фото, видео и текст.\n\nОтправьте ещё раз:",
-            InlineKeyboardMarkup(
-                [[InlineKeyboardButton("❌ Отмена", callback_data=f"ap_cadd:{pid}")]]
-            ),
-        )
-        return AttachmentPanelState.ADDING
-
+async def _xp_receive_attachment(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, attachment: dict
+) -> int:
+    pid = context.user_data.get("_xp_pid", "")
     add_attachment(pid, attachment)
     p = get_product(pid)
     if p:
-        await _attach_edit(context, _ap_text(p), _ap_keyboard(p))
-    return AttachmentPanelState.IDLE
+        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
+    return EditPanelState.IDLE
+
+
+async def edit_panel_recv_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from datetime import datetime
+    if not update.message.photo:
+        await update.message.reply_text("⚠️ Отправьте фото.")
+        return EditPanelState.ADDING_PHOTO
+    ts  = datetime.now().strftime("%Y-%m-%dT%H:%M")
+    att = {"type": "photo", "file_id": update.message.photo[-1].file_id,
+           "timestamp": ts, "added_by": update.effective_user.id}
+    return await _xp_receive_attachment(update, context, att)
+
+
+async def edit_panel_recv_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from datetime import datetime
+    if not update.message.video:
+        await update.message.reply_text("⚠️ Отправьте видео.")
+        return EditPanelState.ADDING_VIDEO
+    ts  = datetime.now().strftime("%Y-%m-%dT%H:%M")
+    att = {"type": "video", "file_id": update.message.video.file_id,
+           "timestamp": ts, "added_by": update.effective_user.id}
+    return await _xp_receive_attachment(update, context, att)
+
+
+async def edit_panel_recv_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from datetime import datetime
+    if not update.message.text:
+        await update.message.reply_text("⚠️ Введите текст.")
+        return EditPanelState.ADDING_NOTE
+    ts  = datetime.now().strftime("%Y-%m-%dT%H:%M")
+    att = {"type": "note", "text": update.message.text.strip(),
+           "timestamp": ts, "added_by": update.effective_user.id}
+    return await _xp_receive_attachment(update, context, att)
+
+
+async def edit_panel_recv_cat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    pid     = context.user_data.get("_xp_pid", "")
+    user_id = update.effective_user.id
+    cat     = update.message.text.strip()
+    update_product(pid, {"category": cat}, updated_by=user_id)
+    p = get_product(pid)
+    if p:
+        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
+    return EditPanelState.IDLE
+
+
+async def edit_panel_recv_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    pid     = context.user_data.get("_xp_pid", "")
+    user_id = update.effective_user.id
+    text    = update.message.text.strip()
+    try:
+        fob_usd = float(text.replace(",", ".").replace(" ", ""))
+        if fob_usd <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            "⚠️ Введите число больше 0, например: <code>85.50</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return EditPanelState.EDITING_PRICE
+    p = get_product(pid)
+    if p:
+        settings = load_settings()
+        calc     = calculate_cost_per_unit(fob_usd, p.get("qty_40hq", 1), settings)
+        update_product(pid, {"fob_usd": fob_usd, "kz_price": calc["G5"]}, updated_by=user_id)
+        p = get_product(pid)
+        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
+    return EditPanelState.IDLE
+
+
+async def edit_panel_recv_factory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    pid     = context.user_data.get("_xp_pid", "")
+    user_id = update.effective_user.id
+    factory = update.message.text.strip()
+    update_product(pid, {"factory": factory}, updated_by=user_id)
+    p = get_product(pid)
+    if p:
+        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
+    return EditPanelState.IDLE
+
+
+async def edit_panel_recv_exh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    pid     = context.user_data.get("_xp_pid", "")
+    user_id = update.effective_user.id
+    exh     = update.message.text.strip()
+    update_product(pid, {"exhibition": exh}, updated_by=user_id)
+    p = get_product(pid)
+    if p:
+        await _xp_edit(context, _xp_text(p), _xp_keyboard(pid))
+    return EditPanelState.IDLE
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────
@@ -1126,20 +1079,42 @@ def main() -> None:
         allow_reentry=True,
     )
 
-    attachment_panel_conv = ConversationHandler(
+    edit_panel_conv = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(attachment_panel_open, pattern=r"^ap_open:"),
+            MessageHandler(filters.Regex("^✏️ Редактировать$"), edit_panel_open),
+            CommandHandler("edit", edit_panel_open),
         ],
         states={
-            AttachmentPanelState.IDLE: [
-                CallbackQueryHandler(attachment_panel_cb, pattern=r"^ap_"),
+            EditPanelState.IDLE: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_"),
             ],
-            AttachmentPanelState.ADDING: [
-                CallbackQueryHandler(attachment_panel_cb, pattern=r"^ap_cadd:"),
-                MessageHandler(
-                    filters.PHOTO | filters.VIDEO | (filters.TEXT & ~filters.COMMAND),
-                    attachment_panel_receive,
-                ),
+            EditPanelState.ADDING_PHOTO: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_cancel:"),
+                MessageHandler(filters.PHOTO, edit_panel_recv_photo),
+            ],
+            EditPanelState.ADDING_VIDEO: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_cancel:"),
+                MessageHandler(filters.VIDEO, edit_panel_recv_video),
+            ],
+            EditPanelState.ADDING_NOTE: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_cancel:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_panel_recv_note),
+            ],
+            EditPanelState.EDITING_CAT: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_cancel:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_panel_recv_cat),
+            ],
+            EditPanelState.EDITING_PRICE: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_cancel:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_panel_recv_price),
+            ],
+            EditPanelState.EDITING_FACT: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_panel_recv_factory),
+            ],
+            EditPanelState.EDITING_EXH: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_panel_recv_exh),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -1205,34 +1180,12 @@ def main() -> None:
         allow_reentry=True,
     )
 
-    catalog_edit_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(catalog_edit_start, pattern=r"^cedit:")],
-        states={
-            CatalogEditState.PHOTO: [
-                MessageHandler(filters.PHOTO, catalog_edit_photo),
-                CommandHandler("skip", catalog_edit_skip_photo),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, catalog_edit_photo),
-            ],
-            CatalogEditState.DATA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, catalog_edit_data),
-            ],
-            CatalogEditState.CATEGORY_PICK: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, catalog_edit_category_pick),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        allow_reentry=True,
-    )
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex("^📚 Каталог$"), catalog_open))
-    app.add_handler(catalog_edit_conv)
-    app.add_handler(attachment_panel_conv)
+    app.add_handler(edit_panel_conv)
     app.add_handler(factory_panel_conv)
     app.add_handler(exhibition_panel_conv)
     app.add_handler(product_conv)
     app.add_handler(settings_panel_conv)
-    app.add_handler(CallbackQueryHandler(catalog_callback))
 
     logger.info("Bot started, polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -346,25 +346,28 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     chat_id = update.effective_chat.id
     markup  = _card_markup(saved_id)
+
+    # --- Send album header first (if any media) ---
+    new_media_ids: list[int] = []
     if hero_media:
-        first = hero_media[0]
-        if first["type"] == "photo":
-            sent = await context.bot.send_photo(
-                chat_id=chat_id, photo=first["file_id"],
-                caption=card_text, parse_mode=ParseMode.HTML, reply_markup=markup,
-            )
-        else:
-            sent = await context.bot.send_video(
-                chat_id=chat_id, video=first["file_id"],
-                caption=card_text, parse_mode=ParseMode.HTML, reply_markup=markup,
-            )
-    else:
-        sent = await update.message.reply_text(
-            card_text, parse_mode=ParseMode.HTML, reply_markup=markup,
-        )
+        group = []
+        for m in hero_media[:10]:
+            if m["type"] == "photo":
+                group.append(InputMediaPhoto(media=m["file_id"]))
+            else:
+                group.append(InputMediaVideo(media=m["file_id"]))
+        sent_group = await context.bot.send_media_group(chat_id=chat_id, media=group)
+        new_media_ids = [msg.message_id for msg in sent_group]
+
+    # --- Send text card body below album ---
+    sent_text = await update.message.reply_text(
+        card_text, parse_mode=ParseMode.HTML, reply_markup=markup,
+    )
+
     update_product(saved_id, {
-        "card_message_id": sent.message_id,
-        "card_chat_id":    chat_id,
+        "media_message_ids": new_media_ids,
+        "text_message_id":   sent_text.message_id,
+        "card_chat_id":      chat_id,
     }, updated_by=user_id)
     return ConversationHandler.END
 
@@ -768,68 +771,113 @@ async def _xp_edit(
     text: str,
     keyboard: InlineKeyboardMarkup | None = None,
 ) -> None:
-    """Edit the panel/card message — uses caption edit for media cards, text edit for text cards."""
+    """Edit the text-layer card message in-place via editMessageText."""
     msg_id  = context.user_data.get("_xp_msg_id")
     chat_id = context.user_data.get("_xp_chat_id")
     if not msg_id or not chat_id:
         return
-    is_media = context.user_data.get("_xp_is_media", False)
     try:
-        if is_media:
-            await context.bot.edit_message_caption(
-                chat_id=chat_id,
-                message_id=msg_id,
-                caption=text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard,
-            )
-        else:
-            await context.bot.edit_message_text(
-                text,
-                chat_id=chat_id,
-                message_id=msg_id,
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard,
-            )
+        await context.bot.edit_message_text(
+            text,
+            chat_id=chat_id,
+            message_id=msg_id,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
     except Exception as e:
-        logger.warning("_xp_edit failed (is_media=%s): %s", is_media, e)
+        logger.warning("_xp_edit failed: %s", e)
+
+
+async def _rebuild_card(
+    context: ContextTypes.DEFAULT_TYPE,
+    pid: str,
+    chat_id: int,
+    user_id: int,
+) -> None:
+    """
+    Full Shopify-card rebuild:
+      1. Delete existing album messages (media_message_ids)
+      2. Delete existing text card (text_message_id)
+      3. Send fresh sendMediaGroup (album header)
+      4. Send fresh text card (body)
+      5. Store new IDs in DB and update session pointers.
+    """
+    p = get_product(pid)
+    if not p:
+        return
+    settings   = load_settings()
+    card_txt   = format_card_from_db(p, settings)
+    markup     = _card_markup(pid)
+    hero_media = p.get("hero_media", [])
+
+    # --- 1. Delete old album messages ---
+    for mid in p.get("media_message_ids", []):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass
+
+    # --- 2. Delete old text card ---
+    old_text_mid = p.get("text_message_id") or context.user_data.get("_xp_msg_id")
+    if old_text_mid:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=old_text_mid)
+        except Exception:
+            pass
+
+    # --- 3. Send fresh album header (if any media) ---
+    new_media_ids: list[int] = []
+    if hero_media:
+        group = []
+        for m in hero_media[:10]:
+            if m["type"] == "photo":
+                group.append(InputMediaPhoto(media=m["file_id"]))
+            else:
+                group.append(InputMediaVideo(media=m["file_id"]))
+        sent_group = await context.bot.send_media_group(chat_id=chat_id, media=group)
+        new_media_ids = [msg.message_id for msg in sent_group]
+
+    # --- 4. Send fresh text card (body) ---
+    sent_text = await context.bot.send_message(
+        chat_id=chat_id, text=card_txt,
+        parse_mode=ParseMode.HTML, reply_markup=markup,
+    )
+
+    # --- 5. Persist new IDs ---
+    update_product(pid, {
+        "media_message_ids": new_media_ids,
+        "text_message_id":   sent_text.message_id,
+        "card_chat_id":      chat_id,
+    }, updated_by=user_id)
+    context.user_data["_xp_msg_id"]  = sent_text.message_id
+    context.user_data["_xp_chat_id"] = chat_id
 
 
 async def _restore_card(context: ContextTypes.DEFAULT_TYPE, pid: str) -> None:
-    """Reload product from DB, rebuild full card text, update message in-place."""
+    """Update the text-layer body in-place (editMessageText). Does NOT touch the album."""
     p = get_product(pid)
     if not p:
         return
     settings = load_settings()
-    context.user_data["_xp_is_media"] = bool(p.get("hero_media"))
     await _xp_edit(context, format_card_from_db(p, settings), _card_markup(pid))
 
 
 async def edit_by_id_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Entry point: inline button 'edit_<product_id>' on a product card."""
-    query    = update.callback_query
+    """Entry point: inline button 'edit_<product_id>' on the text-layer card."""
+    query = update.callback_query
     await query.answer()
-    pid      = query.data[len("edit_"):]
-    p        = get_product(pid)
+    pid = query.data[len("edit_"):]
+    p   = get_product(pid)
     if not p:
         await query.answer("⚠️ Товар не найден.", show_alert=True)
         return ConversationHandler.END
-    is_media = bool(p.get("hero_media"))
-    context.user_data["_xp_pid"]      = pid
-    context.user_data["_xp_msg_id"]   = query.message.message_id
-    context.user_data["_xp_chat_id"]  = query.message.chat_id
-    context.user_data["_xp_is_media"] = is_media
-    panel_text   = _xp_text(p)
-    panel_markup = _xp_keyboard(pid)
+    context.user_data["_xp_pid"]     = pid
+    context.user_data["_xp_msg_id"]  = query.message.message_id
+    context.user_data["_xp_chat_id"] = query.message.chat_id
     try:
-        if is_media:
-            await query.edit_message_caption(
-                caption=panel_text, parse_mode=ParseMode.HTML, reply_markup=panel_markup
-            )
-        else:
-            await query.edit_message_text(
-                panel_text, parse_mode=ParseMode.HTML, reply_markup=panel_markup
-            )
+        await query.edit_message_text(
+            _xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid)
+        )
     except Exception as e:
         logger.warning("edit_by_id_cb open failed: %s", e)
         return ConversationHandler.END
@@ -1009,63 +1057,18 @@ async def _recv_media_item(
     stay_state: int,
 ) -> int:
     """
-    Shared handler for photo and video additions via the edit panel.
-
-    No media yet  → delete text card → send_photo/send_video with caption
-    Already media → editMessageMedia (replace visible media, keep caption updated)
-    Never sends separate floating messages.
+    Add one photo or video to the product's hero_media gallery, then
+    do a full Shopify-card rebuild: delete old album + text → resend album → resend text.
+    No separate floating messages are ever sent.
     """
     from datetime import datetime
     pid     = context.user_data.get("_xp_pid", "")
     chat_id = update.effective_chat.id
-    msg_id  = context.user_data.get("_xp_msg_id")
     user_id = update.effective_user.id
     ts      = datetime.now().strftime("%Y-%m-%dT%H:%M")
 
-    had_media = bool((get_product(pid) or {}).get("hero_media"))
     add_hero_media(pid, {"type": media_type, "file_id": file_id, "timestamp": ts})
-    p        = get_product(pid)
-    settings = load_settings()
-    card_txt = format_card_from_db(p, settings)
-    markup   = _card_markup(pid)
-
-    if not had_media:
-        # Card was a text message — delete it and send a new photo/video card
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except Exception as e:
-            logger.warning("delete old text card failed: %s", e)
-        if media_type == "photo":
-            sent = await context.bot.send_photo(
-                chat_id=chat_id, photo=file_id,
-                caption=card_txt, parse_mode=ParseMode.HTML, reply_markup=markup,
-            )
-        else:
-            sent = await context.bot.send_video(
-                chat_id=chat_id, video=file_id,
-                caption=card_txt, parse_mode=ParseMode.HTML, reply_markup=markup,
-            )
-        context.user_data["_xp_msg_id"]   = sent.message_id
-        context.user_data["_xp_is_media"] = True
-        update_product(pid, {
-            "card_message_id": sent.message_id,
-            "card_chat_id":    chat_id,
-        }, updated_by=user_id)
-    else:
-        # Card is already a media message — update media + caption in-place
-        media_obj = (
-            InputMediaPhoto(media=file_id, caption=card_txt, parse_mode=ParseMode.HTML)
-            if media_type == "photo"
-            else InputMediaVideo(media=file_id, caption=card_txt, parse_mode=ParseMode.HTML)
-        )
-        try:
-            await context.bot.edit_message_media(
-                chat_id=chat_id, message_id=msg_id,
-                media=media_obj, reply_markup=markup,
-            )
-        except Exception as e:
-            logger.warning("editMessageMedia failed: %s", e)
-
+    await _rebuild_card(context, pid, chat_id, user_id)
     return ConversationHandler.END
 
 

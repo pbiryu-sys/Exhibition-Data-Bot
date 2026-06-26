@@ -35,3 +35,10 @@ def save_user_context(user_id: int, active_factory: str, active_exhibition: str)
         "active_exhibition": active_exhibition,
     }
     _save_all(all_data)
+
+
+def clear_user_context(user_id: int) -> None:
+    """Remove all stored data for this user. Global settings are untouched."""
+    all_data = _load_all()
+    all_data.pop(str(user_id), None)
+    _save_all(all_data)

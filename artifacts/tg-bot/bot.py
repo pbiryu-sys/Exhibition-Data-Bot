@@ -21,7 +21,7 @@ from telegram.constants import ParseMode
 from states import ProductState, SettingsState, ContextState
 from pricing import load_settings, save_settings
 from formatters import format_product_card, format_settings
-from context_store import load_user_context, save_user_context
+from context_store import load_user_context, save_user_context, clear_user_context
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -53,7 +53,7 @@ def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
         [
             [KeyboardButton("➕ Новый товар")],
             [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
-            [KeyboardButton("⚙️ Настройки")],
+            [KeyboardButton("⚙️ Настройки"), KeyboardButton("🗑 Очистить историю")],
         ],
         resize_keyboard=True,
     )
@@ -65,6 +65,20 @@ def _main_menu_text(ctx: dict) -> str:
         f"🎪 Активная выставка: <b>{ctx['active_exhibition']}</b>\n"
         f"🏭 Активная фабрика: <b>{ctx['active_factory']}</b>\n\n"
         "Нажмите <b>«➕ Новый товар»</b> чтобы добавить позицию."
+    )
+
+
+# ─── Clear history ──────────────────────────────────────────────────────────
+
+async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    clear_user_context(user_id)          # wipe user entry from user_context.json
+    context.user_data.clear()            # clear any in-progress session state
+    ctx = load_user_context(user_id)     # reloads with defaults
+    await update.message.reply_text(
+        "🗑 <b>История очищена.</b>\n\nМожешь начать заново.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_main_keyboard(ctx),
     )
 
 
@@ -524,6 +538,7 @@ def main() -> None:
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex("^🗑 Очистить историю$"), clear_history))
     app.add_handler(factory_conv)
     app.add_handler(exhibition_conv)
     app.add_handler(product_conv)

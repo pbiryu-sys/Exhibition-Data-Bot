@@ -23,29 +23,15 @@ def load_user_context(user_id: int) -> dict:
     all_data = _load_all()
     user = all_data.get(str(user_id), {})
     return {
-        "active_factory": user.get("active_factory", DEFAULT_FACTORY),
+        "active_factory":    user.get("active_factory", DEFAULT_FACTORY),
         "active_exhibition": user.get("active_exhibition", DEFAULT_EXHIBITION),
-        "speed_mode": user.get("speed_mode", False),
     }
 
 
 def save_user_context(user_id: int, active_factory: str, active_exhibition: str) -> None:
     all_data = _load_all()
-    existing = all_data.get(str(user_id), {})
     all_data[str(user_id)] = {
-        "active_factory": active_factory,
+        "active_factory":    active_factory,
         "active_exhibition": active_exhibition,
-        "speed_mode": existing.get("speed_mode", False),
-    }
-    _save_all(all_data)
-
-
-def set_speed_mode(user_id: int, enabled: bool) -> None:
-    all_data = _load_all()
-    existing = all_data.get(str(user_id), {})
-    all_data[str(user_id)] = {
-        "active_factory": existing.get("active_factory", DEFAULT_FACTORY),
-        "active_exhibition": existing.get("active_exhibition", DEFAULT_EXHIBITION),
-        "speed_mode": enabled,
     }
     _save_all(all_data)

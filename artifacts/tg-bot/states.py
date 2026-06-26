@@ -39,3 +39,9 @@ class AdminPanelState(IntEnum):
     IDLE         = auto()
     ADDING_USER  = auto()
     REMOVING_USER = auto()
+
+
+class CatalogState(IntEnum):
+    LIST           = auto()
+    DETAIL         = auto()
+    DELETE_CONFIRM = auto()

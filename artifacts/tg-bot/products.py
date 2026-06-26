@@ -52,11 +52,25 @@ def get_products() -> list[dict]:
     return list(_load())
 
 
+def get_active_products() -> list[dict]:
+    """Return products not soft-deleted, newest first."""
+    return [p for p in reversed(_load()) if p.get("status", "active") != "deleted"]
+
+
+def count_active_products() -> int:
+    return len(get_active_products())
+
+
 def get_product(product_id: str) -> dict | None:
     for p in _load():
         if p["id"] == product_id:
             return p
     return None
+
+
+def soft_delete_product(product_id: str, deleted_by: int) -> bool:
+    """Mark product as deleted without removing from DB."""
+    return update_product(product_id, {"status": "deleted"}, deleted_by)
 
 
 def delete_product(product_id: str, deleted_by: int) -> bool:

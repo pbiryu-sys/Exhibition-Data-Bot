@@ -25,7 +25,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState, AdminPanelState
+from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState, AdminPanelState, CatalogState
 from access import (
     is_allowed, is_owner, is_setup_mode,
     get_owner_id, set_owner,
@@ -40,6 +40,7 @@ from context_store import (
 )
 from products import (
     save_product, get_products, get_product, delete_product, update_product,
+    get_active_products, count_active_products, soft_delete_product,
     add_attachment, delete_attachment, add_hero_media,
 )
 
@@ -254,9 +255,11 @@ SETTINGS_KEYS = [
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 def _main_keyboard(user_id: int = None) -> ReplyKeyboardMarkup:
+    count = count_active_products()
     rows = [
         [KeyboardButton("➕ Новый товар")],
         [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
+        [KeyboardButton(f"📦 Каталог ({count})")],
         [KeyboardButton("⚙️ Настройки")],
     ]
     if user_id and is_owner(user_id):
@@ -1305,6 +1308,222 @@ async def edit_panel_recv_exh(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
+# ─── Catalog ──────────────────────────────────────────────────────────────────
+
+CATALOG_PAGE_SIZE = 10
+
+
+def _catalog_list_text(page: int, products: list) -> str:
+    total   = len(products)
+    pages   = max(1, (total + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE)
+    start   = page * CATALOG_PAGE_SIZE
+    end     = min(start + CATALOG_PAGE_SIZE, total)
+    return (
+        f"📦 <b>Каталог</b> — {total} позиций\n"
+        f"Страница {page + 1}/{pages}\n\n"
+        "Выберите товар для просмотра:"
+    )
+
+
+def _catalog_list_keyboard(page: int, products: list) -> InlineKeyboardMarkup:
+    total  = len(products)
+    pages  = max(1, (total + CATALOG_PAGE_SIZE - 1) // CATALOG_PAGE_SIZE)
+    start  = page * CATALOG_PAGE_SIZE
+    end    = min(start + CATALOG_PAGE_SIZE, total)
+    rows   = []
+
+    for p in products[start:end]:
+        factory = p.get("factory", "—")[:12]
+        sku     = p.get("sku") or p.get("article") or "—"
+        fob     = p.get("fob_usd", 0)
+        label   = f"{factory} | #{sku} | ${fob:.2f}"
+        rows.append([InlineKeyboardButton(label, callback_data=f"cat_p_{p['id']}")])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀", callback_data=f"cat_pg_{page - 1}"))
+    if pages > 1:
+        nav.append(InlineKeyboardButton(f"{page + 1}/{pages}", callback_data="cat_noop"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("▶", callback_data=f"cat_pg_{page + 1}"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton("🔙 Закрыть", callback_data="cat_close")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _catalog_detail_text(p: dict, settings: dict) -> str:
+    from datetime import datetime
+    factory  = p.get("factory", "—")
+    exh      = p.get("exhibition", "—")
+    category = p.get("category", "—")
+    sku      = p.get("sku") or p.get("article") or "—"
+    fob      = p.get("fob_usd", 0)
+    qty      = p.get("qty_40hq", 0)
+    note     = p.get("note", "")
+    rate     = settings.get("exchange_rate", 1)
+    created  = p.get("created_at")
+    date_str = datetime.fromtimestamp(created).strftime("%d.%m.%Y") if created else "—"
+
+    lines = [
+        f"🏭 <b>{factory}</b>  🎪 {exh}",
+        f"📋 {category}  🆔 #{sku}",
+        f"💵 FOB: <b>${fob:.2f}</b>  ({fob * rate:,.0f}₸)",
+        f"📦 40HQ: <b>{qty:,} шт</b>",
+    ]
+    if note:
+        lines.append(f"📝 {note}")
+    lines.append(f"\n🗓 Добавлено: {date_str}")
+    return "\n".join(lines)
+
+
+def _catalog_detail_keyboard(pid: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👁 Просмотр карточки", callback_data=f"cat_view_{pid}")],
+        [InlineKeyboardButton("✏️ Редактировать",     callback_data=f"edit_{pid}"),
+         InlineKeyboardButton("🗑 Удалить",           callback_data=f"cat_del_{pid}")],
+        [InlineKeyboardButton("🔙 Назад к списку",    callback_data="cat_back")],
+    ])
+
+
+def _catalog_confirm_keyboard(pid: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Да, удалить",  callback_data=f"cat_delok_{pid}"),
+         InlineKeyboardButton("❌ Отмена",       callback_data=f"cat_p_{pid}")],
+    ])
+
+
+async def catalog_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    products = get_active_products()
+    context.user_data["cat_page"] = 0
+    page = 0
+    msg = await _reply(
+        update,
+        _catalog_list_text(page, products),
+        parse_mode=ParseMode.HTML,
+        reply_markup=_catalog_list_keyboard(page, products),
+    )
+    context.user_data["cat_msg_id"]  = msg.message_id
+    context.user_data["cat_chat_id"] = update.effective_chat.id
+    return CatalogState.LIST
+
+
+async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query    = update.callback_query
+    await query.answer()
+    uid      = update.effective_user.id
+    data     = query.data
+    settings = load_settings()
+
+    # ── Pagination ───────────────────────────────────────────────────────
+    if data.startswith("cat_pg_"):
+        page     = int(data.split("_")[-1])
+        products = get_active_products()
+        context.user_data["cat_page"] = page
+        await query.edit_message_text(
+            _catalog_list_text(page, products),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_list_keyboard(page, products),
+        )
+        return CatalogState.LIST
+
+    if data == "cat_noop":
+        return CatalogState.LIST
+
+    # ── Open product detail ───────────────────────────────────────────────
+    if data.startswith("cat_p_"):
+        pid = data[len("cat_p_"):]
+        p   = get_product(pid)
+        if not p or p.get("status") == "deleted":
+            products = get_active_products()
+            page     = context.user_data.get("cat_page", 0)
+            await query.edit_message_text(
+                "⚠️ Товар не найден.\n\n" + _catalog_list_text(page, products),
+                parse_mode=ParseMode.HTML,
+                reply_markup=_catalog_list_keyboard(page, products),
+            )
+            return CatalogState.LIST
+        context.user_data["cat_detail_pid"] = pid
+        await query.edit_message_text(
+            _catalog_detail_text(p, settings),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_detail_keyboard(pid),
+        )
+        return CatalogState.DETAIL
+
+    # ── Back to list ─────────────────────────────────────────────────────
+    if data == "cat_back":
+        products = get_active_products()
+        page     = context.user_data.get("cat_page", 0)
+        await query.edit_message_text(
+            _catalog_list_text(page, products),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_list_keyboard(page, products),
+        )
+        return CatalogState.LIST
+
+    # ── View card inline ─────────────────────────────────────────────────
+    if data.startswith("cat_view_"):
+        pid = data[len("cat_view_"):]
+        p   = get_product(pid)
+        if not p:
+            return CatalogState.DETAIL
+        card_text = format_card_from_db(p, settings)
+        back_kb   = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Назад",           callback_data=f"cat_p_{pid}")],
+            [InlineKeyboardButton("✏️ Редактировать",   callback_data=f"edit_{pid}")],
+        ])
+        await query.edit_message_text(
+            card_text, parse_mode=ParseMode.HTML, reply_markup=back_kb,
+        )
+        return CatalogState.DETAIL
+
+    # ── Delete prompt ────────────────────────────────────────────────────
+    if data.startswith("cat_del_"):
+        pid = data[len("cat_del_"):]
+        p   = get_product(pid)
+        if not p:
+            return CatalogState.DETAIL
+        sku = p.get("sku") or p.get("article") or pid[:8]
+        await query.edit_message_text(
+            f"🗑 <b>Удалить товар?</b>\n\n"
+            f"<b>#{sku}</b> — {p.get('factory', '—')}\n\n"
+            "Товар будет скрыт из каталога. Данные сохранятся.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_confirm_keyboard(pid),
+        )
+        return CatalogState.DELETE_CONFIRM
+
+    # ── Confirm delete ───────────────────────────────────────────────────
+    if data.startswith("cat_delok_"):
+        pid = data[len("cat_delok_"):]
+        soft_delete_product(pid, uid)
+        logger.info("Catalog: product %s soft-deleted by %d", pid, uid)
+        products = get_active_products()
+        page     = context.user_data.get("cat_page", 0)
+        # Clamp page if last product on page was deleted
+        max_page = max(0, (len(products) - 1) // CATALOG_PAGE_SIZE)
+        page     = min(page, max_page)
+        context.user_data["cat_page"] = page
+        await query.edit_message_text(
+            "✅ Товар удалён из каталога.\n\n" + _catalog_list_text(page, products),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_list_keyboard(page, products),
+        )
+        return CatalogState.LIST
+
+    # ── Close ────────────────────────────────────────────────────────────
+    if data == "cat_close":
+        try:
+            await query.delete_message()
+        except Exception:
+            await query.edit_message_reply_markup(reply_markup=None)
+        return ConversationHandler.END
+
+    return CatalogState.LIST
+
+
 # ─── Admin panel ─────────────────────────────────────────────────────────────
 
 def _ap_keyboard() -> InlineKeyboardMarkup:
@@ -1712,8 +1931,27 @@ def main() -> None:
     app.add_handler(CommandHandler("removeuser", cmd_removeuser))
     app.add_handler(CommandHandler("users",      cmd_users))
 
+    catalog_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex(r"^📦 Каталог"), catalog_open)],
+        states={
+            CatalogState.LIST: [
+                CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
+            ],
+            CatalogState.DETAIL: [
+                CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
+                # edit_{pid} callbacks fall through to edit_panel_conv
+            ],
+            CatalogState.DELETE_CONFIRM: [
+                CallbackQueryHandler(catalog_cb, pattern=r"^cat_"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(admin_panel_conv)
+    app.add_handler(catalog_conv)
     app.add_handler(edit_panel_conv)
     app.add_handler(factory_panel_conv)
     app.add_handler(exhibition_panel_conv)

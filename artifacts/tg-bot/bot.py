@@ -331,23 +331,22 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         saved = save_product(product_record, created_by=user_id)
         saved_id = saved["id"]
 
-    context.user_data["_last_product_id"] = saved_id
-
-    ctx = load_user_context(user_id)
-    reply_markup = _main_keyboard(ctx)
+    edit_btn = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{saved_id}")]]
+    )
 
     if data.get("photo_file_id"):
         await _reply_photo(update,
             photo=data["photo_file_id"],
             caption=card_text,
             parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup,
+            reply_markup=edit_btn,
         )
     else:
         await _reply(update,
             card_text,
             parse_mode=ParseMode.HTML,
-            reply_markup=reply_markup,
+            reply_markup=edit_btn,
         )
 
     return ConversationHandler.END
@@ -760,23 +759,26 @@ async def _xp_edit(
             pass
 
 
-def _resolve_edit_pid(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str | None:
-    """Return the product ID to edit: last session product → last by this user → newest overall."""
-    pid = context.user_data.get("_last_product_id")
-    if pid and get_product(pid):
-        return pid
-    products = sorted(get_products(), key=lambda x: x.get("created_at", 0), reverse=True)
-    for p in products:
-        if p.get("created_by") == user_id:
-            return p["id"]
-    return products[0]["id"] if products else None
+async def edit_by_id_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point: inline button 'edit_<product_id>' on a product card."""
+    query = update.callback_query
+    await query.answer()
+    pid = query.data[len("edit_"):]
+    p   = get_product(pid)
+    if not p:
+        await query.answer("⚠️ Товар не найден.", show_alert=True)
+        return ConversationHandler.END
+    context.user_data["_xp_pid"]     = pid
+    context.user_data["_xp_msg_id"]  = query.message.message_id
+    context.user_data["_xp_chat_id"] = query.message.chat_id
+    await query.edit_message_text(
+        _xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid)
+    )
+    return EditPanelState.IDLE
 
 
 async def edit_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-
-    # Optional: /edit SKU  or  /edit  (no arg)
-    pid = None
+    """/edit SKU — open edit panel for a specific product by SKU."""
     if update.message and update.message.text:
         parts = update.message.text.strip().split(maxsplit=1)
         if len(parts) > 1:
@@ -784,7 +786,14 @@ async def edit_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             products = get_products()
             match    = next((x for x in products if x.get("sku", "").lower() == sku.lower()), None)
             if match:
-                pid = match["id"]
+                p = match
+                context.user_data["_xp_pid"] = p["id"]
+                sent = await update.message.reply_text(
+                    _xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(p["id"])
+                )
+                context.user_data["_xp_msg_id"]  = sent.message_id
+                context.user_data["_xp_chat_id"] = update.effective_chat.id
+                return EditPanelState.IDLE
             else:
                 await update.message.reply_text(
                     f"⚠️ Товар с артикулом <b>{sku}</b> не найден.",
@@ -792,25 +801,13 @@ async def edit_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
                 return ConversationHandler.END
 
-    if not pid:
-        pid = _resolve_edit_pid(context, user_id)
-
-    p = get_product(pid) if pid else None
-    if not p:
-        await update.message.reply_text(
-            "📭 <b>Нет товаров для редактирования.</b>\n\n"
-            "Создайте товар через «➕ Новый товар».",
-            parse_mode=ParseMode.HTML,
-        )
-        return ConversationHandler.END
-
-    context.user_data["_xp_pid"] = p["id"]
-    sent = await update.message.reply_text(
-        _xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(p["id"])
+    await update.message.reply_text(
+        "✏️ <b>Редактирование</b>\n\n"
+        "Нажмите кнопку <b>✏️ Редактировать</b> прямо под карточкой товара,\n"
+        "или используйте команду: <code>/edit АРТИКУЛ</code>",
+        parse_mode=ParseMode.HTML,
     )
-    context.user_data["_xp_msg_id"]  = sent.message_id
-    context.user_data["_xp_chat_id"] = update.effective_chat.id
-    return EditPanelState.IDLE
+    return ConversationHandler.END
 
 
 async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1081,6 +1078,7 @@ def main() -> None:
 
     edit_panel_conv = ConversationHandler(
         entry_points=[
+            CallbackQueryHandler(edit_by_id_cb, pattern=r"^edit_"),
             MessageHandler(filters.Regex("^✏️ Редактировать$"), edit_panel_open),
             CommandHandler("edit", edit_panel_open),
         ],

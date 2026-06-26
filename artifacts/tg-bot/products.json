@@ -62,5 +62,21 @@
     "exhibition": " CSS27",
     "note": "Плплп",
     "photo_file_id": null
+  },
+  {
+    "id": "4b648d86-a9c1-4d84-9ab7-ed20bad94ebd",
+    "created_by": 348641645,
+    "created_at": 1782466877.723399,
+    "updated_by": null,
+    "updated_at": null,
+    "sku": "Делала",
+    "category": "Другое",
+    "fob_usd": 1000.0,
+    "qty_40hq": 675,
+    "kz_price": 1499130.63,
+    "factory": "Lijiujia",
+    "exhibition": " CSS27",
+    "note": "Тпдвлат",
+    "photo_file_id": null
   }
 ]

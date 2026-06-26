@@ -25,6 +25,7 @@ from context_store import (
     load_user_context, save_user_context, clear_user_context,
     get_factories, add_factory, delete_factory,
     get_exhibitions, add_exhibition, delete_exhibition, exhibition_display,
+    add_message_id, get_message_ids, clear_message_ids,
 )
 
 logging.basicConfig(
@@ -124,12 +125,24 @@ def _main_menu_text(ctx: dict) -> str:
 
 async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    clear_user_context(user_id)          # wipe user entry from user_context.json
-    context.user_data.clear()            # clear any in-progress session state
-    ctx = load_user_context(user_id)     # reloads with None factory/exhibition
+    chat_id = update.effective_chat.id
+
+    # Delete all tracked product card messages from the chat
+    message_ids = get_message_ids(user_id)
+    deleted = 0
+    for msg_id in message_ids:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted += 1
+        except Exception:
+            pass  # Already deleted, too old (>48h), or no permission — skip silently
+
+    clear_message_ids(user_id)   # wipe message ID registry (keeps factories/exhibitions)
+    context.user_data.clear()    # clear any in-progress session state
+
+    ctx = load_user_context(user_id)
     await update.message.reply_text(
-        "🗑 <b>История очищена.</b>\n\nМожешь начать заново.",
-        parse_mode=ParseMode.HTML,
+        "История очищена.",
         reply_markup=_main_keyboard(ctx),
     )
 
@@ -312,19 +325,20 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reply_markup = _main_keyboard(ctx)
 
     if data.get("photo_file_id"):
-        await update.message.reply_photo(
+        sent = await update.message.reply_photo(
             photo=data["photo_file_id"],
             caption=card_text,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup,
         )
     else:
-        await update.message.reply_text(
+        sent = await update.message.reply_text(
             card_text,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup,
         )
 
+    add_message_id(user_id, sent.message_id)
     return ConversationHandler.END
 
 

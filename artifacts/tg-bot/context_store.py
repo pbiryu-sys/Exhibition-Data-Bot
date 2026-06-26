@@ -45,6 +45,34 @@ def clear_user_context(user_id: int) -> None:
     _save_all(all_data)
 
 
+# ─── Message ID registry ─────────────────────────────────────────────────────
+
+def add_message_id(user_id: int, message_id: int) -> None:
+    """Register a bot message ID so it can be bulk-deleted later."""
+    all_data = _load_all()
+    uid = str(user_id)
+    if uid not in all_data:
+        all_data[uid] = {}
+    ids = all_data[uid].get("message_ids", [])
+    ids.append(message_id)
+    all_data[uid]["message_ids"] = ids
+    _save_all(all_data)
+
+
+def get_message_ids(user_id: int) -> list[int]:
+    all_data = _load_all()
+    return list(all_data.get(str(user_id), {}).get("message_ids", []))
+
+
+def clear_message_ids(user_id: int) -> None:
+    """Remove only the message_ids registry; preserves factory/exhibition data."""
+    all_data = _load_all()
+    uid = str(user_id)
+    if uid in all_data:
+        all_data[uid].pop("message_ids", None)
+        _save_all(all_data)
+
+
 # ─── Factory list ────────────────────────────────────────────────────────────
 
 def get_factories(user_id: int) -> list[str]:

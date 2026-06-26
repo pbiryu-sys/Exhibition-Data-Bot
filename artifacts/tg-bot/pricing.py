@@ -45,8 +45,16 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
             All validation must anchor to G5. T5/U5/V5 are cost-breakdown
             diagnostics only. G5_bot == G5_excel is the exact-match target.
     """
-    O1 = settings["exchange_rate"]       # manual internal procurement rate (USD→KZT)
-    O2 = settings["container_cost"]     # container freight cost in USD (Excel O2)
+    # ── Excel named inputs — strict semantic bindings ────────────────────────
+    O1 = settings["exchange_rate"]          # USD→KZT rate (Excel O1)
+
+    # O2 MUST be container_cost_usd from settings — NEVER qty or any derived value.
+    container_cost_usd = settings["container_cost"]
+    if not isinstance(container_cost_usd, (int, float)) or container_cost_usd != settings["container_cost"]:
+        raise ValueError(f"INVALID_CONTAINER_COST_BINDING: O2={container_cost_usd!r}")
+    O2 = container_cost_usd                # alias kept for Excel column traceability
+
+    E5 = qty_40hq                          # quantity — separate variable, never aliased to O2
 
     margin = settings["margin"]
     vat    = settings["vat"]
@@ -59,10 +67,10 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
     snap = {}
 
     # STEP 1 — L5 (shared dependency: used by both M5 and O5; must freeze first)
-    snap["L5"] = O1 * O2                                           # rate × qty — STATIC, frozen from here
+    snap["L5"] = O1 * O2                   # exchange_rate × container_cost_usd — STATIC, frozen from here
 
     # STEP 2 — K5 (independent of L5)
-    snap["K5"] = fob_price_usd * qty_40hq * O1                    # F5 * D5 * O1 — full precision
+    snap["K5"] = fob_price_usd * E5 * O1  # F5 * E5 * O1 — full precision
 
     # STEP 3 — M5 (depends on frozen L5 and frozen K5 only)
     snap["M5"] = (snap["K5"] * 0.05) + ((snap["L5"] * 0.95) * 0.05)

@@ -6,22 +6,34 @@
       "Yeekang",
       "Dapao",
       "RH Fitness",
-      "DDS"
+      "DDS",
+      "Sunlink",
+      "Kingline",
+      "Transtar Fitness",
+      "Very Sports",
+      "Lucky Stars",
+      "Ope Sport",
+      "ZXCH",
+      "Ypoo"
     ],
     "exhibitions": [
       {
         "name": "CF26",
         "year": null
+      },
+      {
+        "name": "",
+        "year": "CSS27"
       }
     ],
-    "active_factory": "DDS",
-    "active_exhibition": "CF26",
+    "active_factory": "Ypoo",
+    "active_exhibition": " CSS27",
     "message_ids": [
-      357,
-      359,
-      361,
-      363,
-      365
+      411,
+      413,
+      415,
+      417,
+      419
     ]
   }
 }

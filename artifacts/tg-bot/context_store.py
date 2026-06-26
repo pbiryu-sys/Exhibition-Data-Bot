@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 CONTEXT_PATH = os.path.join(os.path.dirname(__file__), "user_context.json")
 
@@ -45,31 +46,53 @@ def clear_user_context(user_id: int) -> None:
     _save_all(all_data)
 
 
-# ─── Message ID registry ─────────────────────────────────────────────────────
+# ─── Message log (per-user, persistent) ─────────────────────────────────────
+# Each entry: {"id": int, "chat_id": int, "ts": float, "type": "bot"}
 
-def add_message_id(user_id: int, message_id: int) -> None:
-    """Register a bot message ID so it can be bulk-deleted later."""
+def add_message_entry(user_id: int, chat_id: int, message_id: int) -> None:
+    """Append a bot message entry to the user's message log."""
     all_data = _load_all()
     uid = str(user_id)
     if uid not in all_data:
         all_data[uid] = {}
-    ids = all_data[uid].get("message_ids", [])
-    ids.append(message_id)
-    all_data[uid]["message_ids"] = ids
+    msgs = all_data[uid].get("messages", [])
+    msgs.append({"id": message_id, "chat_id": chat_id, "ts": time.time(), "type": "bot"})
+    all_data[uid]["messages"] = msgs
     _save_all(all_data)
 
 
-def get_message_ids(user_id: int) -> list[int]:
+def get_all_message_entries(user_id: int) -> list[dict]:
+    """Return all stored message entries for this user."""
     all_data = _load_all()
-    return list(all_data.get(str(user_id), {}).get("message_ids", []))
+    raw = all_data.get(str(user_id), {}).get("messages", [])
+    # Backwards-compat: skip bare ints from old format
+    return [m for m in raw if isinstance(m, dict)]
 
 
-def clear_message_ids(user_id: int) -> None:
-    """Remove only the message_ids registry; preserves factory/exhibition data."""
+def get_recent_message_entries(user_id: int, cutoff_ts: float) -> list[dict]:
+    """Return entries with ts >= cutoff_ts (i.e. within the last N hours)."""
+    return [m for m in get_all_message_entries(user_id) if m.get("ts", 0) >= cutoff_ts]
+
+
+def clear_all_message_entries(user_id: int) -> None:
+    """Remove the entire message log; preserves factory/exhibition data."""
     all_data = _load_all()
     uid = str(user_id)
     if uid in all_data:
-        all_data[uid].pop("message_ids", None)
+        all_data[uid].pop("messages", None)
+        all_data[uid].pop("message_ids", None)   # remove legacy key too
+        _save_all(all_data)
+
+
+def remove_message_entries(user_id: int, ids_to_remove: set) -> None:
+    """Remove specific entries by message_id; keep the rest."""
+    all_data = _load_all()
+    uid = str(user_id)
+    if uid in all_data:
+        all_data[uid]["messages"] = [
+            m for m in all_data[uid].get("messages", [])
+            if isinstance(m, dict) and m.get("id") not in ids_to_remove
+        ]
         _save_all(all_data)
 
 

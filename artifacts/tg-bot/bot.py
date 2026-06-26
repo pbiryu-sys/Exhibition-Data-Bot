@@ -25,7 +25,8 @@ from context_store import (
     load_user_context, save_user_context, clear_user_context,
     get_factories, add_factory, delete_factory,
     get_exhibitions, add_exhibition, delete_exhibition, exhibition_display,
-    add_message_id, get_message_ids, clear_message_ids,
+    add_message_entry, get_all_message_entries,
+    get_recent_message_entries, clear_all_message_entries, remove_message_entries,
 )
 
 logging.basicConfig(
@@ -45,13 +46,13 @@ _conv_handlers: list = []
 
 async def _reply(update: Update, *args, **kwargs) -> "Message":
     sent = await update.message.reply_text(*args, **kwargs)
-    add_message_id(update.effective_user.id, sent.message_id)
+    add_message_entry(update.effective_user.id, update.effective_chat.id, sent.message_id)
     return sent
 
 
 async def _reply_photo(update: Update, *args, **kwargs) -> "Message":
     sent = await update.message.reply_photo(*args, **kwargs)
-    add_message_id(update.effective_user.id, sent.message_id)
+    add_message_entry(update.effective_user.id, update.effective_chat.id, sent.message_id)
     return sent
 
 ALLOWED_CATEGORIES = [
@@ -107,6 +108,7 @@ def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
             [KeyboardButton("➕ Новый товар")],
             [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
             [KeyboardButton("⚙️ Настройки"), KeyboardButton("🗑 Очистить историю")],
+            [KeyboardButton("🧹 Очистить бот за 48 часов")],
         ],
         resize_keyboard=True,
     )
@@ -146,16 +148,15 @@ async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # 1. Delete all tracked product card messages from the chat
-    message_ids = get_message_ids(user_id)
-    for msg_id in message_ids:
+    # 1. Delete all tracked bot messages from the chat
+    for entry in get_all_message_entries(user_id):
         try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            await context.bot.delete_message(chat_id=entry["chat_id"], message_id=entry["id"])
         except Exception:
             pass  # Already deleted, too old (>48h), or no permission — skip silently
 
-    # 2. Wipe persistent product history (keeps factories/exhibitions/active context)
-    clear_message_ids(user_id)
+    # 2. Wipe persistent message log (keeps factories/exhibitions/active context)
+    clear_all_message_entries(user_id)
 
     # 3. Reset every ConversationHandler's FSM state for this user.
     #    Default key scheme: (chat_id, user_id)  [per_chat=True, per_user=True]
@@ -172,6 +173,33 @@ async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await _reply(update,
         "История полностью очищена. Нажмите /start",
+    )
+
+
+# ─── Clean last 48 hours ────────────────────────────────────────────────────
+
+async def clean_48h(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    import time as _time
+    user_id = update.effective_user.id
+    cutoff = _time.time() - 48 * 3600
+
+    entries = get_recent_message_entries(user_id, cutoff)
+    deleted_ids: set[int] = set()
+    for entry in entries:
+        try:
+            await context.bot.delete_message(
+                chat_id=entry["chat_id"], message_id=entry["id"]
+            )
+            deleted_ids.add(entry["id"])
+        except Exception:
+            deleted_ids.add(entry["id"])  # count as done even if already gone
+
+    remove_message_entries(user_id, deleted_ids)
+
+    ctx = load_user_context(user_id)
+    await update.message.reply_text(
+        f"🧹 Удалено сообщений за 48 ч: {len(deleted_ids)}.",
+        reply_markup=_main_keyboard(ctx),
     )
 
 
@@ -1028,6 +1056,7 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^🗑 Очистить историю$"), clear_history))
+    app.add_handler(MessageHandler(filters.Regex("^🧹 Очистить бот за 48 часов$"), clean_48h))
     app.add_handler(factory_mgmt_conv)
     app.add_handler(exhibition_mgmt_conv)
     app.add_handler(factory_conv)

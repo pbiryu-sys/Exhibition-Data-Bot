@@ -16,22 +16,25 @@ def _save_all(data: dict) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+# ─── Active context ──────────────────────────────────────────────────────────
+
 def load_user_context(user_id: int) -> dict:
-    """Returns user context. factory/exhibition are None if not explicitly set."""
+    """Returns active factory/exhibition. Both are None if not explicitly set."""
     all_data = _load_all()
     user = all_data.get(str(user_id), {})
     return {
-        "active_factory":    user.get("active_factory"),    # None if not set
-        "active_exhibition": user.get("active_exhibition"), # None if not set
+        "active_factory":    user.get("active_factory"),
+        "active_exhibition": user.get("active_exhibition"),
     }
 
 
 def save_user_context(user_id: int, active_factory, active_exhibition) -> None:
     all_data = _load_all()
-    all_data[str(user_id)] = {
-        "active_factory":    active_factory,
-        "active_exhibition": active_exhibition,
-    }
+    uid = str(user_id)
+    if uid not in all_data:
+        all_data[uid] = {}
+    all_data[uid]["active_factory"]    = active_factory
+    all_data[uid]["active_exhibition"] = active_exhibition
     _save_all(all_data)
 
 
@@ -40,3 +43,76 @@ def clear_user_context(user_id: int) -> None:
     all_data = _load_all()
     all_data.pop(str(user_id), None)
     _save_all(all_data)
+
+
+# ─── Factory list ────────────────────────────────────────────────────────────
+
+def get_factories(user_id: int) -> list[str]:
+    all_data = _load_all()
+    return list(all_data.get(str(user_id), {}).get("factories", []))
+
+
+def add_factory(user_id: int, name: str) -> None:
+    all_data = _load_all()
+    uid = str(user_id)
+    if uid not in all_data:
+        all_data[uid] = {}
+    factories = all_data[uid].get("factories", [])
+    if name not in factories:
+        factories.append(name)
+    all_data[uid]["factories"] = factories
+    _save_all(all_data)
+
+
+def delete_factory(user_id: int, index: int) -> str | None:
+    """Delete factory by 0-based index. Returns deleted name or None."""
+    all_data = _load_all()
+    uid = str(user_id)
+    factories = all_data.get(uid, {}).get("factories", [])
+    if 0 <= index < len(factories):
+        removed = factories.pop(index)
+        all_data[uid]["factories"] = factories
+        _save_all(all_data)
+        return removed
+    return None
+
+
+# ─── Exhibition list ─────────────────────────────────────────────────────────
+
+def get_exhibitions(user_id: int) -> list[dict]:
+    """Returns list of {name, year} dicts."""
+    all_data = _load_all()
+    return list(all_data.get(str(user_id), {}).get("exhibitions", []))
+
+
+def add_exhibition(user_id: int, name: str, year: str | None = None) -> None:
+    all_data = _load_all()
+    uid = str(user_id)
+    if uid not in all_data:
+        all_data[uid] = {}
+    exhibitions = all_data[uid].get("exhibitions", [])
+    entry = {"name": name, "year": year or None}
+    if entry not in exhibitions:
+        exhibitions.append(entry)
+    all_data[uid]["exhibitions"] = exhibitions
+    _save_all(all_data)
+
+
+def delete_exhibition(user_id: int, index: int) -> dict | None:
+    """Delete exhibition by 0-based index. Returns deleted entry or None."""
+    all_data = _load_all()
+    uid = str(user_id)
+    exhibitions = all_data.get(uid, {}).get("exhibitions", [])
+    if 0 <= index < len(exhibitions):
+        removed = exhibitions.pop(index)
+        all_data[uid]["exhibitions"] = exhibitions
+        _save_all(all_data)
+        return removed
+    return None
+
+
+def exhibition_display(ex: dict) -> str:
+    """Format exhibition for display: 'Name Year' or 'Name'."""
+    if ex.get("year"):
+        return f"{ex['name']} {ex['year']}"
+    return ex["name"]

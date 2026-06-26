@@ -20,3 +20,16 @@ class ContextState(IntEnum):
     FACTORY_CUSTOM = auto()
     EXHIBITION_CHOOSE = auto()
     EXHIBITION_CUSTOM = auto()
+
+
+class FactoryMgmtState(IntEnum):
+    MENU = auto()
+    ADD_NAME = auto()
+    DELETE_CHOOSE = auto()
+
+
+class ExhibitionMgmtState(IntEnum):
+    MENU = auto()
+    ADD_NAME = auto()
+    ADD_YEAR = auto()
+    DELETE_CHOOSE = auto()

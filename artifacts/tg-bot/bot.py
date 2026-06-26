@@ -104,7 +104,7 @@ def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
         [
             [KeyboardButton("➕ Новый товар")],
             [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
-            [KeyboardButton("✏️ Редактировать"), KeyboardButton("⚙️ Настройки")],
+            [KeyboardButton("⚙️ Настройки")],
         ],
         resize_keyboard=True,
     )
@@ -885,38 +885,6 @@ async def edit_by_id_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return EditPanelState.IDLE
 
 
-async def edit_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """/edit SKU — open edit panel for a specific product by SKU."""
-    if update.message and update.message.text:
-        parts = update.message.text.strip().split(maxsplit=1)
-        if len(parts) > 1:
-            sku      = parts[1].strip()
-            products = get_products()
-            match    = next((x for x in products if x.get("sku", "").lower() == sku.lower()), None)
-            if match:
-                p = match
-                context.user_data["_xp_pid"] = p["id"]
-                sent = await update.message.reply_text(
-                    _xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(p["id"])
-                )
-                context.user_data["_xp_msg_id"]  = sent.message_id
-                context.user_data["_xp_chat_id"] = update.effective_chat.id
-                return EditPanelState.IDLE
-            else:
-                await update.message.reply_text(
-                    f"⚠️ Товар с артикулом <b>{sku}</b> не найден.",
-                    parse_mode=ParseMode.HTML,
-                )
-                return ConversationHandler.END
-
-    await update.message.reply_text(
-        "✏️ <b>Редактирование</b>\n\n"
-        "Нажмите кнопку <b>✏️ Редактировать</b> прямо под карточкой товара,\n"
-        "или используйте команду: <code>/edit АРТИКУЛ</code>",
-        parse_mode=ParseMode.HTML,
-    )
-    return ConversationHandler.END
-
 
 async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query   = update.callback_query
@@ -1190,8 +1158,6 @@ def main() -> None:
     edit_panel_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(edit_by_id_cb, pattern=r"^edit_"),
-            MessageHandler(filters.Regex("^✏️ Редактировать$"), edit_panel_open),
-            CommandHandler("edit", edit_panel_open),
         ],
         states={
             EditPanelState.IDLE: [

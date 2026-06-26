@@ -129,20 +129,34 @@ def _open_sheet(gc, sheet_id: str):
 
 
 def _worksheet(sh):
+    # Prefer sheet1 property, fall back to get_worksheet(0)
     try:
         ws = sh.sheet1
+        logger.info("Worksheet obtained via sh.sheet1")
     except Exception:
+        logger.exception("sh.sheet1 failed — falling back to get_worksheet(0)")
         ws = sh.get_worksheet(0)
 
-    logger.info("Worksheet: title='%s' id=%s cols=%s",
-                ws.title, ws.id, ws.col_count)
+    # Full worksheet state dump
+    logger.info(
+        "Worksheet state — title='%s' id=%s col_count=%s row_count=%s",
+        ws.title, ws.id, ws.col_count, ws.row_count,
+    )
 
-    if not ws.row_values(1):
-        ws.append_row(SHEET_HEADERS, value_input_option="RAW")
-        logger.info("Header row written (%d columns)", len(SHEET_HEADERS))
+    # Check / write header row
+    first_row = ws.row_values(1)
+    if not first_row:
+        logger.info("No header row found — writing %d headers", len(SHEET_HEADERS))
+        ws.append_row(SHEET_HEADERS, value_input_option="RAW",
+                      insert_data_option="INSERT_ROWS")
+        logger.info("Header row written OK")
     else:
-        existing = ws.row_values(1)
-        logger.info("Existing header (%d cols): %s", len(existing), existing)
+        logger.info("Existing header row (%d cols): %s", len(first_row), first_row)
+        if len(first_row) != len(SHEET_HEADERS):
+            logger.error(
+                "HEADER MISMATCH — sheet has %d cols, code expects %d cols (%s)",
+                len(first_row), len(SHEET_HEADERS), SHEET_HEADERS,
+            )
 
     return ws
 
@@ -154,6 +168,22 @@ def _append_row(product: dict, settings: dict,
     sh = _open_sheet(gc, sheet_id)
     ws = _worksheet(sh)
 
+    # ── Probe: verify write access with a trivial append ───────────────────────
+    logger.info("Probe: testing write access with a single-cell append...")
+    try:
+        ws.append_row(["__PROBE__"], value_input_option="RAW",
+                      insert_data_option="INSERT_ROWS")
+        logger.info("Probe append OK — deleting probe row now")
+        # Delete the probe row (it was appended at the end)
+        all_vals = ws.col_values(1)
+        probe_row_idx = len(all_vals)  # 1-based row index of the probe
+        ws.delete_rows(probe_row_idx)
+        logger.info("Probe row deleted at index %d", probe_row_idx)
+    except Exception:
+        logger.exception("PROBE APPEND FAILED — write access is blocked")
+        raise
+
+    # ── Build data row ─────────────────────────────────────────────────────────
     fob = product.get("fob_usd", 0)
     qty = product.get("qty_40hq", 0)
     try:
@@ -183,15 +213,23 @@ def _append_row(product: dict, settings: dict,
         "\n".join(doc_links),
     ]
 
+    # ── Schema validation ──────────────────────────────────────────────────────
+    logger.info(
+        "Schema check — SHEET_HEADERS=%d cols, row=%d cols",
+        len(SHEET_HEADERS), len(row),
+    )
+    logger.info("Row values: %s", row)
     if len(row) != len(SHEET_HEADERS):
         raise RuntimeError(
-            f"Row length {len(row)} != headers length {len(SHEET_HEADERS)} — aborting append"
+            f"Schema mismatch: row has {len(row)} cols but SHEET_HEADERS has "
+            f"{len(SHEET_HEADERS)} cols. row={row} headers={SHEET_HEADERS}"
         )
 
-    logger.info(">>> APPEND ROW START — %d columns, product=%s factory=%s sku=%s",
-                len(row), product.get("id"), product.get("factory"), row[1])
-    ws.append_row(row, value_input_option="USER_ENTERED")
-    logger.info(">>> APPEND ROW SUCCESS — sheet=%s", sh.id)
+    # ── Real append ───────────────────────────────────────────────────────────
+    logger.info(">>> APPEND ROW START — product=%s factory=%s sku=%s",
+                product.get("id"), product.get("factory"), row[1])
+    ws.append_row(row, value_input_option="RAW", insert_data_option="INSERT_ROWS")
+    logger.info(">>> APPEND ROW SUCCESS — sheet=%s url=%s", sh.id, sh.url)
 
     return sh.url
 

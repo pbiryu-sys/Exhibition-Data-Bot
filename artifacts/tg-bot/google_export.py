@@ -109,9 +109,23 @@ def _upload_bytes(drive, data: bytes, name: str, mime: str, folder_id: str) -> s
 
 async def _upload_tg_file(bot, file_id: str, file_name: str,
                            mime: str, folder_id: str, drive) -> str:
+    logger.info("TG download start — file_id=%s name=%s mime=%s", file_id, file_name, mime)
+
     tg_file = await bot.get_file(file_id)
+    logger.info("TG get_file OK — file_path=%s file_size=%s",
+                getattr(tg_file, "file_path", "?"),
+                getattr(tg_file, "file_size", "?"))
+
     buf = BytesIO()
     await tg_file.download_to_memory(buf)
+    buf_size = len(buf.getvalue())
+    logger.info("TG download complete — buffer_size=%d bytes", buf_size)
+
+    if buf_size == 0:
+        raise RuntimeError(
+            f"Downloaded file is empty (0 bytes): file_id={file_id} name={file_name}"
+        )
+
     return _upload_bytes(drive, buf.getvalue(), file_name, mime, folder_id)
 
 
@@ -277,6 +291,24 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
     video_links: list[str] = []
     doc_links:   list[str] = []
 
+    # ── Upfront media inventory dump ───────────────────────────────────────────
+    raw_hero  = product.get("hero_media") or []
+    raw_docs  = product.get("documents")  or []
+    logger.info(
+        "MEDIA INVENTORY — hero_media=%d items, documents=%d items, drive_folder_id=%s",
+        len(raw_hero), len(raw_docs), drive_folder_id or "(NOT SET)",
+    )
+    for i, m in enumerate(raw_hero):
+        logger.info(
+            "  hero_media[%d]: type=%s file_id=%s telegram_file_id=%s file_name=%s",
+            i, m.get("type"), m.get("file_id"), m.get("telegram_file_id"), m.get("file_name"),
+        )
+    for i, d in enumerate(raw_docs):
+        logger.info(
+            "  documents[%d]: telegram_file_id=%s file_name=%s file_type=%s",
+            i, d.get("telegram_file_id"), d.get("file_name"), d.get("file_type"),
+        )
+
     if drive_folder_id:
         logger.info(">>> DRIVE UPLOAD START — folder_id=%s", drive_folder_id)
         try:
@@ -284,48 +316,69 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
             logger.info("Drive service authenticated as %s", sa_email)
         except Exception:
             logger.exception("Drive auth FAILED")
-            drive = None
+            raise
 
-        if drive:
-            for m in product.get("hero_media") or []:
-                fid   = m.get("telegram_file_id") or m.get("file_id")
-                if not fid:
-                    continue
-                ftype = m.get("type", "photo")
-                fname = (
-                    m.get("file_name")
-                    or (f"photo_{int(time.time())}.jpg" if ftype == "photo"
-                        else f"video_{int(time.time())}.mp4")
+        # ── Hero media (photos + videos) ───────────────────────────────────────
+        for i, m in enumerate(raw_hero):
+            fid = m.get("telegram_file_id") or m.get("file_id")
+            if not fid:
+                logger.warning("hero_media[%d] has no file_id — skipping", i)
+                continue
+            ftype = m.get("type", "photo")
+            fname = (
+                m.get("file_name")
+                or (f"photo_{int(time.time())}.jpg" if ftype == "photo"
+                    else f"video_{int(time.time())}.mp4")
+            )
+            mime = "image/jpeg" if ftype == "photo" else "video/mp4"
+            logger.info(
+                "Uploading hero_media[%d] — fid=%s ftype=%s fname=%s mime=%s",
+                i, fid, ftype, fname, mime,
+            )
+            try:
+                link = await _upload_tg_file(bot, fid, fname, mime, drive_folder_id, drive)
+                (photo_links if ftype == "photo" else video_links).append(link)
+                logger.info("hero_media[%d] uploaded OK — link=%s", i, link)
+            except Exception:
+                logger.exception(
+                    "HERO MEDIA UPLOAD FAILED [%d] file_id=%s fname=%s — ABORTING", i, fid, fname
                 )
-                mime = "image/jpeg" if ftype == "photo" else "video/mp4"
-                try:
-                    link = await _upload_tg_file(bot, fid, fname, mime, drive_folder_id, drive)
-                    (photo_links if ftype == "photo" else video_links).append(link)
-                except Exception:
-                    logger.exception("Hero media upload FAILED [%s]", fname)
+                raise
 
-            for d in product.get("documents") or []:
-                fid   = d.get("telegram_file_id")
-                if not fid:
-                    continue
-                fname = d.get("file_name", "document")
-                ftype = d.get("file_type", "application/octet-stream")
-                mime = (
-                    "image/jpeg" if ftype == "photo" else
-                    "video/mp4"  if ftype == "video" else
-                    (ftype if "/" in ftype else "application/octet-stream")
+        # ── Documents ──────────────────────────────────────────────────────────
+        for i, d in enumerate(raw_docs):
+            fid = d.get("telegram_file_id")
+            if not fid:
+                logger.warning("documents[%d] has no telegram_file_id — skipping", i)
+                continue
+            fname = d.get("file_name", "document")
+            ftype = d.get("file_type", "application/octet-stream")
+            mime = (
+                "image/jpeg" if ftype == "photo" else
+                "video/mp4"  if ftype == "video" else
+                (ftype if "/" in ftype else "application/octet-stream")
+            )
+            logger.info(
+                "Uploading documents[%d] — fid=%s fname=%s mime=%s",
+                i, fid, fname, mime,
+            )
+            try:
+                link = await _upload_tg_file(bot, fid, fname, mime, drive_folder_id, drive)
+                doc_links.append(link)
+                logger.info("documents[%d] uploaded OK — link=%s", i, link)
+            except Exception:
+                logger.exception(
+                    "DOC UPLOAD FAILED [%d] file_id=%s fname=%s — ABORTING", i, fid, fname
                 )
-                try:
-                    link = await _upload_tg_file(bot, fid, fname, mime, drive_folder_id, drive)
-                    doc_links.append(link)
-                except Exception:
-                    logger.exception("Doc upload FAILED [%s]", fname)
+                raise
 
         folder_url = f"https://drive.google.com/drive/folders/{drive_folder_id}"
-        logger.info("Drive uploads done — photos=%d videos=%d docs=%d folder=%s",
-                    len(photo_links), len(video_links), len(doc_links), folder_url)
+        logger.info(
+            ">>> DRIVE UPLOAD COMPLETE — photos=%d videos=%d docs=%d folder=%s",
+            len(photo_links), len(video_links), len(doc_links), folder_url,
+        )
     else:
-        logger.info("Drive upload skipped — google_drive_folder_id not set")
+        logger.info("Drive upload skipped — google_drive_folder_id not set in Settings")
         folder_url = ""
 
     # ── Append Sheets row ──────────────────────────────────────────────────────

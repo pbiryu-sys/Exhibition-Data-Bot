@@ -1675,13 +1675,16 @@ def _cat_menu_text() -> str:
 
 
 def _cat_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    rows = [
         [InlineKeyboardButton("🏭 По фабрике",    callback_data="cat_facts")],
         [InlineKeyboardButton("🏷 По категории",  callback_data="cat_cats")],
         [InlineKeyboardButton("🔍 Поиск",         callback_data="cat_dosearch")],
         [InlineKeyboardButton("📋 Все товары",    callback_data="cat_all")],
-        [InlineKeyboardButton("✖️ Закрыть",       callback_data="cat_close")],
-    ])
+    ]
+    if google_export.is_configured():
+        rows.append([InlineKeyboardButton("📦 Экспорт всех", callback_data="cat_bulk_export")])
+    rows.append([InlineKeyboardButton("✖️ Закрыть", callback_data="cat_close")])
+    return InlineKeyboardMarkup(rows)
 
 
 # ─── Catalog: factory / category selection lists ──────────────────────────────
@@ -2044,6 +2047,80 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=back_kb, disable_web_page_preview=True,
         )
         return CatalogState.DETAIL
+
+    # ── Bulk export all products to Google Sheets ─────────────────────────
+    if data == "cat_bulk_export":
+        if not google_export.is_configured():
+            await query.answer("⚠️ Google-интеграция не настроена.", show_alert=True)
+            return CatalogState.MENU
+        all_products = get_products()
+        total = len(all_products)
+        if total == 0:
+            await query.answer("📦 Нет товаров для экспорта.", show_alert=True)
+            return CatalogState.MENU
+
+        await query.edit_message_text(
+            f"⏳ <b>Массовый экспорт…</b>\n\n0 / {total} товаров",
+            parse_mode=ParseMode.HTML,
+        )
+
+        settings = load_settings()
+        exported = 0
+        failed_ids: list[str] = []
+
+        for i, product in enumerate(all_products, start=1):
+            pid = product.get("id", f"#{i}")
+            logger.info("Bulk export %d/%d: product_id=%s", i, total, pid)
+            # Update progress every 5 products or on the first one
+            if i == 1 or i % 5 == 0:
+                try:
+                    await query.edit_message_text(
+                        f"⏳ <b>Массовый экспорт…</b>\n\n{i - 1} / {total} товаров",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass  # Telegram may throttle edits — not critical
+
+            try:
+                result = await google_export.export_product(product, settings, context.bot)
+                if result.get("status") == "ok":
+                    exported += 1
+                    logger.info("Bulk export OK: product_id=%s", pid)
+                else:
+                    failed_ids.append(pid)
+                    logger.warning(
+                        "Bulk export FAILED: product_id=%s status=%s error=%s",
+                        pid, result.get("status"), result.get("error", ""),
+                    )
+            except Exception:
+                failed_ids.append(pid)
+                logger.exception("Bulk export EXCEPTION: product_id=%s", pid)
+
+        logger.info("Bulk export complete: %d/%d exported, %d failed", exported, total, len(failed_ids))
+
+        if failed_ids:
+            failed_text = "\n".join(f"• {fid}" for fid in failed_ids[:20])
+            if len(failed_ids) > 20:
+                failed_text += f"\n… и ещё {len(failed_ids) - 20}"
+            summary = (
+                f"⚠️ <b>Массовый экспорт завершён с ошибками</b>\n\n"
+                f"✅ Экспортировано: {exported} / {total}\n"
+                f"❌ Ошибок: {len(failed_ids)}\n\n"
+                f"<b>Не удалось экспортировать:</b>\n{failed_text}"
+            )
+        else:
+            summary = (
+                f"✅ <b>Массовый экспорт завершён</b>\n\n"
+                f"Экспортировано: {exported} / {total} товаров"
+            )
+
+        back_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 В каталог", callback_data="cat_menu")],
+        ])
+        await query.edit_message_text(
+            summary, parse_mode=ParseMode.HTML, reply_markup=back_kb,
+        )
+        return CatalogState.MENU
 
     # ── Close ─────────────────────────────────────────────────────────────
     if data == "cat_close":

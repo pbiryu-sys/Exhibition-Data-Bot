@@ -260,7 +260,7 @@
     "created_by": 348641645,
     "created_at": 1782469381.8342817,
     "updated_by": 348641645,
-    "updated_at": 1782469392.3358593,
+    "updated_at": 1782470874.3542511,
     "sku": "АТМ6778",
     "category": "Велотренажер",
     "fob_usd": 1000.0,
@@ -279,13 +279,52 @@
         "type": "video",
         "file_id": "BAACAgIAAxkBAAICJmo-UXmoy-_YapYUmECQQmKp4KTXAAK7mAACV6zwSSlhJXLRtW2IPAQ",
         "timestamp": "2026-06-26T10:23"
+      },
+      {
+        "type": "photo",
+        "file_id": "AgACAgIAAxkBAAICWmo-WNnsFRek8FO_fO8aqb827AcXAAJ3FWsbucLwSZdo85_UjG2cAQADAgADeQADPAQ",
+        "timestamp": "2026-06-26T10:47"
       }
     ],
     "media_message_ids": [
-      585,
-      586
+      603,
+      604,
+      605
     ],
-    "text_message_id": 587,
+    "text_message_id": 606,
+    "card_chat_id": 348641645
+  },
+  {
+    "id": "8458f31a-a700-45fe-ad22-cb5b801a145a",
+    "created_by": 348641645,
+    "created_at": 1782470851.4314265,
+    "updated_by": 348641645,
+    "updated_at": 1782471280.9643607,
+    "sku": "АТМ111",
+    "category": "Велотренажер",
+    "fob_usd": 100.0,
+    "qty_40hq": 675,
+    "kz_price": 162301.36,
+    "factory": "Lijiujia",
+    "exhibition": "CF26",
+    "note": "Подумать подумать",
+    "hero_media": [
+      {
+        "type": "photo",
+        "file_id": "AgACAgIAAxkBAAICVWo-WLgMTSwCeLgPnfj2FMYFfU4SAALkGGsbV6zwSdBA4qnCnbMqAQADAgADeQADPAQ",
+        "timestamp": "2026-06-26T10:47"
+      },
+      {
+        "type": "video",
+        "file_id": "BAACAgIAAxkBAAICX2o-WPyKKg4UyV-BO6Ap6sqm7dORAAIkmQACV6zwSZB1CtqyowL-PAQ",
+        "timestamp": "2026-06-26T10:48"
+      }
+    ],
+    "media_message_ids": [
+      608,
+      609
+    ],
+    "text_message_id": 610,
     "card_chat_id": 348641645
   }
 ]

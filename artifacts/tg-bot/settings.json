@@ -2,7 +2,6 @@
   "margin": 0.59,
   "vat": 1.16,
   "exchange_rate": 500,
-  "container_cost": 5700,
   "customs_fee_kzt": 23592,
   "terminal_fee_kzt": 50000,
   "storage_fee_kzt": 30000,

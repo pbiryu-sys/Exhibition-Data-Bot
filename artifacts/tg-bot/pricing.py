@@ -24,11 +24,13 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
       fob_price_usd  — F5  (FOB price per unit, USD)
       qty_40hq       — E5  (units per 40HQ container)
       exchange_rate  — O1  (USD→KZT manual internal rate)
-      container_cost — O2  (container freight cost, USD)
+
+    Container cost is DYNAMIC (not a global setting):
+      container_cost_usd = fob_price_usd * qty_40hq   (O2, computed per product)
 
     Cell formulas (exact order):
       K5 = fob_price_usd * qty_40hq * exchange_rate
-      L5 = exchange_rate * container_cost
+      L5 = exchange_rate * container_cost_usd
       M5 = (K5 * 0.05) + (L5 * 0.95 * 0.05)
       N5 = customs_fee_kzt
       O5 = ((L5 * 0.85) + N5 + M5 + K5) * 0.16
@@ -42,15 +44,15 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
       G5 = V5 / qty_40hq / (1 - margin) * vat
     """
     # Named inputs — must never be swapped or aliased to each other
-    exchange_rate  = settings["exchange_rate"]    # O1
-    container_cost = settings["container_cost"]   # O2 (USD)
-    margin         = settings["margin"]
-    vat            = settings["vat"]
+    exchange_rate      = settings["exchange_rate"]    # O1
+    container_cost_usd = fob_price_usd * qty_40hq    # O2 — dynamic, scales with FOB × qty
+    margin             = settings["margin"]
+    vat                = settings["vat"]
 
     # ── Cell-by-cell computation — exact Excel order, no reordering allowed ──
 
     K5 = fob_price_usd * qty_40hq * exchange_rate
-    L5 = exchange_rate * container_cost
+    L5 = exchange_rate * container_cost_usd
     M5 = (K5 * 0.05) + (L5 * 0.95 * 0.05)
     N5 = settings["customs_fee_kzt"]
     O5 = ((L5 * 0.85) + N5 + M5 + K5) * 0.16
@@ -65,11 +67,11 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
 
     # ── Internal debug log ────────────────────────────────────────────────────
     logger.debug(
-        "PRICING | FOB=%.4f qty=%d O1=%.2f O2=%.2f | "
+        "PRICING | FOB=%.4f qty=%d O1=%.2f O2(dynamic)=%.2f | "
         "K5=%.4f L5=%.4f M5=%.4f N5=%.2f O5=%.4f "
         "P5=%.2f Q5=%.2f R5=%.2f S5=%.2f "
         "T5=%.4f U5=%.4f V5=%.4f >>> G5=%.4f <<<",
-        fob_price_usd, qty_40hq, exchange_rate, container_cost,
+        fob_price_usd, qty_40hq, exchange_rate, container_cost_usd,
         K5, L5, M5, N5, O5, P5, Q5, R5, S5, T5, U5, V5, G5,
     )
 
@@ -91,7 +93,7 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
 
         # Input snapshot (debug trace display only)
         "O1": exchange_rate,
-        "O2": container_cost,
+        "O2": container_cost_usd,   # dynamic value stored for debug trace
         "E5": qty_40hq,
 
         # Legacy aliases (formatter compatibility)
@@ -101,5 +103,4 @@ def calculate_cost_per_unit(fob_price_usd: float, qty_40hq: int, settings: dict)
         "unit_cost":          round(U5, 2),
         "net_ex_vat":         round(V5, 2),
         "sell_price":         round(G5, 2),
-        # P5–S5 are container-level constants — no per-unit division allowed
     }

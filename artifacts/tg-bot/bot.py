@@ -29,7 +29,7 @@ from states import ProductState, EditPanelState, FactoryPanelState, ExhibitionPa
 from access import (
     is_allowed, is_owner, is_setup_mode,
     get_owner_id, set_owner,
-    add_user, remove_user, list_users, list_users_with_roles,
+    add_user, remove_user, list_users, list_users_with_roles, find_by_username,
 )
 from pricing import load_settings, save_settings, calculate_cost_per_unit
 from formatters import format_product_card, format_card_from_db, format_settings
@@ -1359,7 +1359,8 @@ async def admin_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             for u in users:
                 crown = " 👑" if u["id"] == owner else ""
                 role  = u.get("role", "manager")
-                lines.append(f"• <code>{u['id']}</code> — {role}{crown}")
+                uname = f" @{u['username'].lstrip('@')}" if u.get("username") else ""
+                lines.append(f"• <code>{u['id']}</code>{uname} — {role}{crown}")
             text = "\n".join(lines)
         await query.edit_message_text(
             text, parse_mode=ParseMode.HTML,
@@ -1371,7 +1372,11 @@ async def admin_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if data == "ap_add":
         await query.edit_message_text(
-            "➕ <b>Добавить пользователя</b>\n\nОтправьте Telegram ID нового пользователя\n(они могут узнать его через /whoami):",
+            "➕ <b>Добавить пользователя</b>\n\n"
+            "Укажите пользователя одним из способов:\n\n"
+            "• <b>Переслать</b> любое сообщение от него сюда\n"
+            "• Написать <b>@username</b> (если он уже есть в базе)\n"
+            "• Написать числовой <b>Telegram ID</b>",
             parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
         )
         return AdminPanelState.ADDING_USER
@@ -1379,15 +1384,16 @@ async def admin_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if data == "ap_remove":
         users = list_users_with_roles()
         owner = get_owner_id()
-        if not users:
+        removable = [u for u in users if u["id"] != owner]
+        if not removable:
             await query.edit_message_text(
-                "📋 Список пуст.", reply_markup=_ap_keyboard()
+                "📋 Нет пользователей для удаления.", reply_markup=_ap_keyboard()
             )
             return AdminPanelState.IDLE
         lines = ["❌ <b>Удалить пользователя</b>\n\nОтправьте ID для удаления:\n"]
-        for u in users:
-            if u["id"] != owner:
-                lines.append(f"• <code>{u['id']}</code> — {u.get('role','manager')}")
+        for u in removable:
+            uname = f" @{u['username'].lstrip('@')}" if u.get("username") else ""
+            lines.append(f"• <code>{u['id']}</code>{uname} — {u.get('role','manager')}")
         await query.edit_message_text(
             "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
         )
@@ -1431,33 +1437,77 @@ async def admin_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def admin_panel_recv_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    uid = update.effective_user.id
-    text = update.message.text.strip()
-    try:
-        target = int(text)
-    except ValueError:
-        await update.message.reply_text("⚠️ Неверный ID — введите целое число:")
+    uid     = update.effective_user.id
+    msg     = update.message
+    target_id: int | None   = None
+    target_username: str | None = None
+
+    # ── 1. Forwarded message ──────────────────────────────────────────────
+    if msg.forward_from:
+        target_id       = msg.forward_from.id
+        target_username = msg.forward_from.username
+        source_label    = f"переслано от @{target_username}" if target_username else f"переслано (ID {target_id})"
+
+    # ── 2. Text input ─────────────────────────────────────────────────────
+    elif msg.text:
+        raw = msg.text.strip()
+
+        # @username lookup in internal DB
+        if raw.startswith("@") or (not raw.lstrip("-").isdigit()):
+            # treat as username
+            uname = raw.lstrip("@")
+            found = find_by_username(uname)
+            if found:
+                target_id       = found["id"]
+                target_username = found.get("username")
+                source_label    = f"найден @{uname} → ID {target_id}"
+            else:
+                await msg.reply_text(
+                    f"⚠️ Пользователь <code>@{uname}</code> не найден в базе.\n\n"
+                    "Попросите его переслать вам любое своё сообщение и перешлите его сюда.",
+                    parse_mode=ParseMode.HTML,
+                )
+                return AdminPanelState.ADDING_USER
+
+        else:
+            # Numeric ID
+            try:
+                target_id    = int(raw)
+                source_label = f"ID {target_id}"
+            except ValueError:
+                await msg.reply_text("⚠️ Не удалось распознать. Введите числовой ID или @username:")
+                return AdminPanelState.ADDING_USER
+
+    else:
+        # Non-text, non-forward message (sticker, etc.)
+        await msg.reply_text(
+            "⚠️ Не удалось определить пользователя.\n\n"
+            "Перешлите его сообщение, напишите @username или числовой ID."
+        )
         return AdminPanelState.ADDING_USER
 
-    added = add_user(target)
+    # ── Commit ────────────────────────────────────────────────────────────
+    added = add_user(target_id, username=target_username)
     if added:
-        logger.info("Admin panel: user %d added by owner %d", target, uid)
-        await update.message.reply_text(
-            f"✅ Пользователь <code>{target}</code> добавлен.",
+        logger.info("Admin panel: user %d (%s) added by owner %d", target_id, target_username, uid)
+        uname_str = f" (@{target_username.lstrip('@')})" if target_username else ""
+        await msg.reply_text(
+            f"✅ Пользователь <code>{target_id}</code>{uname_str} добавлен.",
             parse_mode=ParseMode.HTML,
         )
     else:
-        await update.message.reply_text(
-            f"ℹ️ Пользователь <code>{target}</code> уже есть в списке.",
+        await msg.reply_text(
+            f"ℹ️ Пользователь <code>{target_id}</code> уже есть в списке.",
             parse_mode=ParseMode.HTML,
         )
-    # Refresh panel
-    msg_id  = context.user_data.get("_ap_msg_id")
-    chat_id = context.user_data.get("_ap_chat_id")
-    if msg_id and chat_id:
+
+    # Refresh panel inline message
+    ap_msg_id  = context.user_data.get("_ap_msg_id")
+    ap_chat_id = context.user_data.get("_ap_chat_id")
+    if ap_msg_id and ap_chat_id:
         try:
             await context.bot.edit_message_text(
-                _ap_text(), chat_id=chat_id, message_id=msg_id,
+                _ap_text(), chat_id=ap_chat_id, message_id=ap_msg_id,
                 parse_mode=ParseMode.HTML, reply_markup=_ap_keyboard(),
             )
         except Exception:
@@ -1641,7 +1691,7 @@ def main() -> None:
             ],
             AdminPanelState.ADDING_USER: [
                 CallbackQueryHandler(admin_panel_cb, pattern=r"^ap_back$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_panel_recv_add),
+                MessageHandler(filters.ALL & ~filters.COMMAND, admin_panel_recv_add),
             ],
             AdminPanelState.REMOVING_USER: [
                 CallbackQueryHandler(admin_panel_cb, pattern=r"^ap_back$"),

@@ -91,12 +91,30 @@ def set_owner(user_id: int) -> None:
     _save(users)
 
 
-def add_user(user_id: int, role: str = "manager") -> bool:
-    """Add user with given role. Returns False if already present."""
+def find_by_username(username: str) -> dict | None:
+    """Return user dict whose username matches (case-insensitive), or None."""
+    uname = username.lstrip("@").lower()
+    for u in _load():
+        stored = u.get("username", "")
+        if stored and stored.lstrip("@").lower() == uname:
+            return u
+    return None
+
+
+def add_user(user_id: int, role: str = "manager", username: str | None = None) -> bool:
+    """Add user with given role. Returns False if already present.
+    If user already exists but username was missing, updates it."""
     users = _load()
-    if any(u["id"] == user_id for u in users):
+    existing = next((u for u in users if u["id"] == user_id), None)
+    if existing:
+        if username and not existing.get("username"):
+            existing["username"] = username
+            _save(users)
         return False
-    users.append({"id": user_id, "role": role})
+    entry: dict = {"id": user_id, "role": role}
+    if username:
+        entry["username"] = username
+    users.append(entry)
     _save(users)
     return True
 

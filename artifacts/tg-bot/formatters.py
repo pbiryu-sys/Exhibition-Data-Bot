@@ -135,6 +135,10 @@ def format_card_from_db(p: dict, settings: dict) -> str:
             parts.append(f"📹 {n_video}")
         lines.append(f"🖼 Медиа: {' · '.join(parts)}")
 
+    docs = p.get("documents") or []
+    if docs:
+        lines.append(f"📎 Документов: {len(docs)}")
+
     if settings.get("debug_mode"):
         O1       = calc["O1"]
         O2       = calc["O2"]

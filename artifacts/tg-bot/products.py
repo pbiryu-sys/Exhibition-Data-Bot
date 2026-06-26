@@ -95,6 +95,37 @@ def update_product(product_id: str, updates: dict, updated_by: int) -> bool:
     return False
 
 
+def add_document(product_id: str, doc: dict, updated_by: int) -> bool:
+    """Append a document record to product.documents."""
+    products = _load()
+    for p in products:
+        if p["id"] == product_id:
+            if "documents" not in p:
+                p["documents"] = []
+            p["documents"].append(doc)
+            p["updated_at"] = time.time()
+            p["updated_by"] = updated_by
+            _save(products)
+            return True
+    return False
+
+
+def remove_document(product_id: str, idx: int, updated_by: int) -> bool:
+    """Remove document at index idx from product.documents."""
+    products = _load()
+    for p in products:
+        if p["id"] == product_id:
+            docs = p.get("documents", [])
+            if 0 <= idx < len(docs):
+                docs.pop(idx)
+                p["documents"] = docs
+                p["updated_at"] = time.time()
+                p["updated_by"] = updated_by
+                _save(products)
+                return True
+    return False
+
+
 def add_attachment(product_id: str, attachment: dict) -> bool:
     products = _load()
     for p in products:

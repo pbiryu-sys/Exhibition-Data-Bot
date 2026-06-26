@@ -42,6 +42,7 @@ from products import (
     save_product, get_products, get_product, delete_product, update_product,
     get_active_products, count_active_products, soft_delete_product,
     add_attachment, delete_attachment, add_hero_media,
+    add_document, remove_document,
 )
 
 logging.basicConfig(
@@ -954,8 +955,36 @@ def _xp_keyboard(pid: str) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("🏭 Завод", callback_data=f"xp_factory:{pid}"),
         ],
+        [
+            InlineKeyboardButton("📎 Документы", callback_data=f"xp_docs:{pid}"),
+        ],
         [InlineKeyboardButton("✖️ Закрыть", callback_data=f"xp_done:{pid}")],
     ])
+
+
+def _docs_text(p: dict) -> str:
+    docs  = p.get("documents") or []
+    name  = p.get("sku") or "товара"
+    count = len(docs)
+    if count == 0:
+        body = "Файлов пока нет. Нажмите «➕ Добавить файл»."
+    else:
+        body = f"{count} файл(ов) прикреплено"
+    return f"📎 <b>Документы — #{name}</b>\n\n{body}"
+
+
+def _docs_keyboard(pid: str, docs: list) -> InlineKeyboardMarkup:
+    rows = []
+    for i, d in enumerate(docs):
+        raw_name = d.get("file_name", f"Файл {i + 1}")
+        label    = raw_name[:32]
+        rows.append([
+            InlineKeyboardButton(f"📄 {label}", callback_data=f"xp_doc_open:{i}:{pid}"),
+            InlineKeyboardButton("🗑",           callback_data=f"xp_doc_del:{i}:{pid}"),
+        ])
+    rows.append([InlineKeyboardButton("➕ Добавить файл", callback_data=f"xp_doc_add:{pid}")])
+    rows.append([InlineKeyboardButton("🔙 Назад",         callback_data=f"xp_cancel:{pid}")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _card_markup(pid: str) -> InlineKeyboardMarkup:
@@ -1212,6 +1241,73 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return EditPanelState.EDITING_EXH
 
+    # ── Document panel ───────────────────────────────────────────────────
+    if data.startswith("xp_docs:"):
+        p = get_product(pid)
+        if not p:
+            return EditPanelState.IDLE
+        docs = p.get("documents") or []
+        await query.edit_message_text(
+            _docs_text(p), parse_mode=ParseMode.HTML,
+            reply_markup=_docs_keyboard(pid, docs),
+        )
+        return EditPanelState.IDLE
+
+    if data.startswith("xp_doc_add:"):
+        cancel_kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("❌ Отмена", callback_data=f"xp_docs:{pid}")]]
+        )
+        await query.edit_message_text(
+            "📎 <b>Прикрепить файл</b>\n\n"
+            "Отправьте файл любого формата:\n"
+            "PDF, Excel, Word, изображение, видео и т.д.",
+            parse_mode=ParseMode.HTML, reply_markup=cancel_kb,
+        )
+        return EditPanelState.ADDING_DOC
+
+    if data.startswith("xp_doc_open:"):
+        # xp_doc_open:{i}:{pid}
+        parts = data.split(":")
+        idx   = int(parts[1])
+        p     = get_product(pid)
+        if p:
+            docs = p.get("documents") or []
+            if 0 <= idx < len(docs):
+                d       = docs[idx]
+                fid     = d["telegram_file_id"]
+                ftype   = d.get("file_type", "document")
+                fname   = d.get("file_name", "file")
+                chat_id = query.message.chat_id
+                try:
+                    if ftype == "photo":
+                        await context.bot.send_photo(chat_id=chat_id, photo=fid, caption=fname)
+                    elif ftype == "video":
+                        await context.bot.send_video(chat_id=chat_id, video=fid, caption=fname)
+                    else:
+                        await context.bot.send_document(chat_id=chat_id, document=fid, filename=fname)
+                except Exception as e:
+                    logger.warning("doc open failed: %s", e)
+                # Refresh docs panel in-place
+                await query.edit_message_text(
+                    _docs_text(p), parse_mode=ParseMode.HTML,
+                    reply_markup=_docs_keyboard(pid, docs),
+                )
+        return EditPanelState.IDLE
+
+    if data.startswith("xp_doc_del:"):
+        # xp_doc_del:{i}:{pid}
+        parts = data.split(":")
+        idx   = int(parts[1])
+        remove_document(pid, idx, user_id)
+        p = get_product(pid)
+        if p:
+            docs = p.get("documents") or []
+            await query.edit_message_text(
+                _docs_text(p), parse_mode=ParseMode.HTML,
+                reply_markup=_docs_keyboard(pid, docs),
+            )
+        return EditPanelState.IDLE
+
     if data.startswith("xp_cancel:"):
         p = get_product(pid)
         if p:
@@ -1281,6 +1377,46 @@ async def edit_panel_recv_note(update: Update, context: ContextTypes.DEFAULT_TYP
     update_product(pid, {"note": update.message.text.strip()}, updated_by=user_id)
     await _restore_card(context, pid)
     return ConversationHandler.END
+
+
+async def edit_panel_recv_doc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive any file type and store it as a product document."""
+    import time as _time
+    pid     = context.user_data.get("_xp_pid", "")
+    user_id = update.effective_user.id
+    msg     = update.message
+
+    if msg.document:
+        file_id   = msg.document.file_id
+        file_name = msg.document.file_name or "document"
+        file_type = msg.document.mime_type or "document"
+    elif msg.photo:
+        file_id   = msg.photo[-1].file_id
+        file_name = f"photo_{int(_time.time())}.jpg"
+        file_type = "photo"
+    elif msg.video:
+        file_id   = msg.video.file_id
+        file_name = msg.video.file_name or f"video_{int(_time.time())}.mp4"
+        file_type = "video"
+    else:
+        await msg.reply_text("⚠️ Отправьте файл, фото или видео:")
+        return EditPanelState.ADDING_DOC
+
+    doc_record = {
+        "file_name":        file_name,
+        "file_type":        file_type,
+        "telegram_file_id": file_id,
+        "uploaded_by":      user_id,
+        "uploaded_at":      _time.time(),
+    }
+    add_document(pid, doc_record, user_id)
+    logger.info("Doc attached to %s: %s by %d", pid, file_name, user_id)
+
+    # Show updated docs panel in the edit message
+    p    = get_product(pid)
+    docs = p.get("documents", []) if p else []
+    await _xp_edit(context, _docs_text(p) if p else "📎 Файл добавлен.", _docs_keyboard(pid, docs))
+    return EditPanelState.IDLE
 
 
 async def edit_panel_recv_sku(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1873,6 +2009,13 @@ def main() -> None:
             EditPanelState.EDITING_SKU: [
                 CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_cancel:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_panel_recv_sku),
+            ],
+            EditPanelState.ADDING_DOC: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_docs:"),
+                MessageHandler(
+                    (filters.Document.ALL | filters.PHOTO | filters.VIDEO) & ~filters.COMMAND,
+                    edit_panel_recv_doc,
+                ),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],

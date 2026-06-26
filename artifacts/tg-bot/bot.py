@@ -531,6 +531,7 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         saved_id = edit_pid
     else:
         saved = save_product(product_record, created_by=user_id)
+        await google_export.export_product(saved, settings, context.bot)
         saved_id = saved["id"]
 
     chat_id = update.effective_chat.id

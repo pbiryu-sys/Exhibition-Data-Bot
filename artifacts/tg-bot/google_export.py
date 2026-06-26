@@ -128,16 +128,16 @@ async def _upload_tg_file(bot, file_id: str, file_name: str,
 # ── Google Sheets helpers ──────────────────────────────────────────────────────
 
 def _open_or_create_sheet(gc, sheet_id: str | None):
+    from pricing import load_settings, save_settings
     if sheet_id:
         try:
             return gc.open_by_key(sheet_id)
         except Exception:
-            logger.warning("Could not open sheet %s — will create new", sheet_id)
-    try:
-        return gc.open(SHEET_TAB_NAME)
-    except Exception:
-        pass
+            logger.warning("Cannot open sheet %s", sheet_id)
     sh = gc.create(SHEET_TAB_NAME)
+    settings = load_settings()
+    settings["google_sheet_id"] = sh.id
+    save_settings(settings)
     sh.share("", perm_type="anyone", role="writer")
     return sh
 

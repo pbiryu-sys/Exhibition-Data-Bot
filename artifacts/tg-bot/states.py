@@ -8,16 +8,17 @@ class ProductState(IntEnum):
 
 
 class EditPanelState(IntEnum):
-    IDLE          = auto()
-    ADDING_PHOTO  = auto()
-    ADDING_VIDEO  = auto()
-    ADDING_NOTE   = auto()
-    EDITING_CAT   = auto()
-    EDITING_PRICE = auto()
-    EDITING_FACT  = auto()
-    EDITING_EXH   = auto()
-    EDITING_SKU   = auto()
-    ADDING_DOC    = auto()
+    IDLE           = auto()
+    ADDING_PHOTO   = auto()
+    ADDING_VIDEO   = auto()
+    ADDING_NOTE    = auto()
+    EDITING_CAT    = auto()
+    EDITING_PRICE  = auto()
+    EDITING_FACT   = auto()
+    EDITING_EXH    = auto()
+    EDITING_SKU    = auto()
+    ADDING_DOC     = auto()
+    DELETE_CONFIRM = auto()
 
 
 class FactoryPanelState(IntEnum):

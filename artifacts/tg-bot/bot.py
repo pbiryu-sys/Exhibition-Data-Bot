@@ -1133,10 +1133,18 @@ def _docs_keyboard(pid: str, docs: list) -> InlineKeyboardMarkup:
 
 
 def _card_markup(pid: str) -> InlineKeyboardMarkup:
-    """Single 'Edit' button for a finished product card."""
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{pid}")]]
-    )
+    """Buttons shown on a finished product card: Edit + Delete."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Редактировать",   callback_data=f"edit_{pid}")],
+        [InlineKeyboardButton("🗑 Удалить карточку", callback_data=f"xp_del:{pid}")],
+    ])
+
+
+def _card_del_confirm_keyboard(pid: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Да, удалить",  callback_data=f"xp_delok:{pid}"),
+         InlineKeyboardButton("❌ Отмена",       callback_data=f"xp_delcancel:{pid}")],
+    ])
 
 
 async def _xp_edit(
@@ -1458,6 +1466,35 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if p:
             await query.edit_message_text(_xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid))
         return EditPanelState.IDLE
+
+    # ── Delete card (from product card, not catalog) ───────────────────────
+    if data.startswith("xp_del:"):
+        p   = get_product(pid)
+        sku = (p.get("sku") or p.get("article") or pid[:8]) if p else pid[:8]
+        await query.edit_message_text(
+            f"🗑 <b>Удалить карточку?</b>\n\n"
+            f"<b>#{sku}</b> — {p.get('factory', '—') if p else '—'}\n\n"
+            "Карточка будет скрыта из каталога и экспорта. "
+            "Данные сохранятся в базе.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_card_del_confirm_keyboard(pid),
+        )
+        return EditPanelState.DELETE_CONFIRM
+
+    if data.startswith("xp_delok:"):
+        soft_delete_product(pid, user_id)
+        logger.info("Product deleted (soft): id=%s by user=%d", pid, user_id)
+        await query.edit_message_text(
+            "✅ <b>Карточка удалена.</b>\n\n"
+            "Товар скрыт из каталога и больше не будет экспортироваться.",
+            parse_mode=ParseMode.HTML,
+        )
+        return ConversationHandler.END
+
+    if data.startswith("xp_delcancel:"):
+        # Return to the product card view
+        await _restore_card(context, pid)
+        return ConversationHandler.END
 
     if data.startswith("xp_done:"):
         await _restore_card(context, pid)
@@ -2521,6 +2558,9 @@ def main() -> None:
                     (filters.Document.ALL | filters.PHOTO | filters.VIDEO) & ~filters.COMMAND,
                     edit_panel_recv_doc,
                 ),
+            ],
+            EditPanelState.DELETE_CONFIRM: [
+                CallbackQueryHandler(edit_panel_cb, pattern=r"^xp_delok:|^xp_delcancel:"),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],

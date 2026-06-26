@@ -15,12 +15,16 @@ def format_product_card(data: dict, settings: dict) -> str:
         settings=settings,
     )
 
-    # ── Input state validation ─────────────────────────────────────────────────
-    # calc["E5"] is the qty the pricing engine actually used (set from qty_40hq).
-    # If it ever diverges from the input, all downstream cells are invalid.
-    if calc["E5"] != _input_qty:
+    # ── Input binding validation (inputs only — no Excel cells) ──────────────
+    # Checks that local binding variables match data dict exactly.
+    # Excel cells (E5, K5, …) are OUTPUTS and are never validated here.
+    if _input_qty != data["qty_40hq"]:
         raise ValueError(
-            f"INPUT_STATE_MISMATCH: bot_qty={_input_qty} != engine_qty={calc['E5']}"
+            f"INPUT_STATE_MISMATCH: _input_qty={_input_qty} != data['qty_40hq']={data['qty_40hq']}"
+        )
+    if _input_fob != data["price"]:
+        raise ValueError(
+            f"INPUT_STATE_MISMATCH: _input_fob={_input_fob} != data['price']={data['price']}"
         )
 
     year       = datetime.now().year

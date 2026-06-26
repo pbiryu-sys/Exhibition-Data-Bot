@@ -99,7 +99,7 @@ SETTINGS_KEYS = [
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
-def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
+def _main_keyboard(ctx: dict = None) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton("➕ Новый товар")],
@@ -370,6 +370,12 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "text_message_id":   sent_text.message_id,
         "card_chat_id":      chat_id,
     }, updated_by=user_id)
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="✅ Товар сохранён.",
+        reply_markup=_main_keyboard(),
+    )
     return ConversationHandler.END
 
 

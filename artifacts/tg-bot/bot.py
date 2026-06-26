@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from states import ProductState, SettingsState, ContextState, FactoryMgmtState, ExhibitionMgmtState, CatalogEditState
+from states import ProductState, CatalogEditState, FactoryPanelState, ExhibitionPanelState, SettingsPanelState
 from pricing import load_settings, save_settings, calculate_cost_per_unit
 from formatters import format_product_card, format_settings
 from context_store import (
@@ -586,532 +586,343 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     ctx = load_user_context(user_id)
-    await _reply(update,
-        "❌ Ввод отменён.",
-        reply_markup=_main_keyboard(ctx),
-    )
+    msg_id  = context.user_data.pop("_panel_msg_id",  None)
+    chat_id = context.user_data.pop("_panel_chat_id", None)
+    if msg_id and chat_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            pass
+    else:
+        await _reply(update, "❌ Ввод отменён.", reply_markup=_main_keyboard(ctx))
     return ConversationHandler.END
 
 
-# ─── Factory context conversation (select active) ────────────────────────────
+# ─── Panel helper ────────────────────────────────────────────────────────────
 
-def _factory_select_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+async def _panel_edit(
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    keyboard: InlineKeyboardMarkup | None = None,
+) -> None:
+    msg_id  = context.user_data.get("_panel_msg_id")
+    chat_id = context.user_data.get("_panel_chat_id")
+    if msg_id and chat_id:
+        try:
+            await context.bot.edit_message_text(
+                text,
+                chat_id=chat_id,
+                message_id=msg_id,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+        except Exception:
+            pass
+
+
+# ─── Factory panel ────────────────────────────────────────────────────────────
+
+def _fp_text(user_id: int) -> str:
+    ctx    = load_user_context(user_id)
+    active = ctx["active_factory"] or "не задана"
+    return f"🏭 <b>Фабрика</b>\n\nАктивная: <b>{active}</b>"
+
+
+def _fp_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    ctx       = load_user_context(user_id)
     factories = get_factories(user_id)
-    buttons = [[KeyboardButton(f)] for f in factories]
-    buttons.append([KeyboardButton("➕ Добавить фабрику")])
-    buttons.append([KeyboardButton("❌ Отмена")])
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    rows = []
+    for i, f in enumerate(factories):
+        mark = "✅ " if f == ctx["active_factory"] else ""
+        rows.append([
+            InlineKeyboardButton(f"{mark}{f}", callback_data=f"fp_sel:{i}"),
+            InlineKeyboardButton("🗑", callback_data=f"fp_del:{i}"),
+        ])
+    rows.append([InlineKeyboardButton("➕ Добавить", callback_data="fp_add")])
+    rows.append([InlineKeyboardButton("✖️ Закрыть",  callback_data="fp_done")])
+    return InlineKeyboardMarkup(rows)
 
 
-async def factory_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def factory_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
-    ctx = load_user_context(user_id)
-    factories = get_factories(user_id)
-    current = ctx["active_factory"] or "не задана"
-    if not factories:
-        await _reply(update,
-            f"🏭 <b>Выбор фабрики</b>\n\nСписок фабрик пуст.\n\n"
-            "Используйте /factories чтобы добавить фабрику.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_main_keyboard(ctx),
-        )
-        return ConversationHandler.END
-    await _reply(update,
-        f"🏭 <b>Выбор фабрики</b>\n\nТекущая: <b>{current}</b>\n\nВыберите из списка:",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_factory_select_keyboard(user_id),
+    sent = await update.message.reply_text(
+        _fp_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_fp_keyboard(user_id)
     )
-    return ContextState.FACTORY_CHOOSE
+    context.user_data["_panel_msg_id"]  = sent.message_id
+    context.user_data["_panel_chat_id"] = update.effective_chat.id
+    return FactoryPanelState.IDLE
 
 
-async def factory_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
+async def factory_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
     user_id = update.effective_user.id
+    data    = query.data
 
-    if text == "❌ Отмена":
-        ctx = load_user_context(user_id)
-        await _reply(update,"Отменено.", reply_markup=_main_keyboard(ctx))
-        return ConversationHandler.END
-
-    if text == "➕ Добавить фабрику":
-        await _reply(update,
-            "✏️ Введите название фабрики:",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return ContextState.FACTORY_CUSTOM
-
-    factories = get_factories(user_id)
-    if text in factories:
-        ctx = load_user_context(user_id)
-        save_user_context(user_id, text, ctx["active_exhibition"])
-        ctx = load_user_context(user_id)
-        await _reply(update,
-            f"✅ Фабрика установлена: <b>{text}</b>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_main_keyboard(ctx),
-        )
-        return ConversationHandler.END
-
-    await _reply(update,
-        "Выберите фабрику из списка или нажмите «➕ Добавить фабрику».",
-        reply_markup=_factory_select_keyboard(user_id),
-    )
-    return ContextState.FACTORY_CHOOSE
-
-
-async def factory_custom(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-    add_factory(user_id, text)
-    ctx = load_user_context(user_id)
-    save_user_context(user_id, text, ctx["active_exhibition"])
-    ctx = load_user_context(user_id)
-    await _reply(update,
-        f"✅ Фабрика добавлена и установлена: <b>{text}</b>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx),
-    )
-    return ConversationHandler.END
-
-
-# ─── Factory management conversation (/factories) ───────────────────────────
-
-def _factory_mgmt_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("➕ Добавить фабрику")],
-            [KeyboardButton("📋 Список"), KeyboardButton("🗑 Удалить")],
-            [KeyboardButton("❌ Выход")],
-        ],
-        resize_keyboard=True,
-    )
-
-
-async def factories_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await _reply(update,
-        "🏭 <b>Управление фабриками</b>\n\nВыберите действие:",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_factory_mgmt_keyboard(),
-    )
-    return FactoryMgmtState.MENU
-
-
-async def factories_menu_handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-
-    if text == "❌ Выход":
-        ctx = load_user_context(user_id)
-        await _reply(update,"Готово.", reply_markup=_main_keyboard(ctx))
-        return ConversationHandler.END
-
-    if text == "📋 Список":
+    if data.startswith("fp_sel:"):
+        idx = int(data.split(":")[1])
         factories = get_factories(user_id)
-        if not factories:
-            msg = "Список фабрик пуст."
-        else:
-            lines = [f"{i+1}. {f}" for i, f in enumerate(factories)]
-            msg = "🏭 <b>Ваши фабрики:</b>\n\n" + "\n".join(lines)
-        await _reply(update,msg, parse_mode=ParseMode.HTML,
-                                        reply_markup=_factory_mgmt_keyboard())
-        return FactoryMgmtState.MENU
-
-    if text == "➕ Добавить фабрику":
-        await _reply(update,
-            "✏️ Введите название фабрики:",
-            reply_markup=ReplyKeyboardRemove(),
+        if 0 <= idx < len(factories):
+            ctx = load_user_context(user_id)
+            save_user_context(user_id, factories[idx], ctx["active_exhibition"])
+        await query.edit_message_text(
+            _fp_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_fp_keyboard(user_id)
         )
-        return FactoryMgmtState.ADD_NAME
+        return FactoryPanelState.IDLE
 
-    if text == "🗑 Удалить":
-        factories = get_factories(user_id)
-        if not factories:
-            await _reply(update,"Список пуст.", reply_markup=_factory_mgmt_keyboard())
-            return FactoryMgmtState.MENU
-        lines = [f"{i+1}. {f}" for i, f in enumerate(factories)]
-        await _reply(update,
-            "🗑 <b>Удалить фабрику</b>\n\n" + "\n".join(lines) +
-            "\n\nВведите номер для удаления:",
+    if data.startswith("fp_del:"):
+        idx = int(data.split(":")[1])
+        delete_factory(user_id, idx)
+        await query.edit_message_text(
+            _fp_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_fp_keyboard(user_id)
+        )
+        return FactoryPanelState.IDLE
+
+    if data == "fp_add":
+        await query.edit_message_text(
+            "🏭 <b>Добавить фабрику</b>\n\nВведите название:",
             parse_mode=ParseMode.HTML,
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data="fp_cadd")]]
+            ),
         )
-        return FactoryMgmtState.DELETE_CHOOSE
+        return FactoryPanelState.ADDING
 
-    await _reply(update,"Выберите действие.", reply_markup=_factory_mgmt_keyboard())
-    return FactoryMgmtState.MENU
+    if data == "fp_cadd":
+        await query.edit_message_text(
+            _fp_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_fp_keyboard(user_id)
+        )
+        return FactoryPanelState.IDLE
+
+    if data == "fp_done":
+        ctx    = load_user_context(user_id)
+        active = ctx["active_factory"] or "—"
+        await query.edit_message_text(f"🏭 {active}")
+        return ConversationHandler.END
+
+    return FactoryPanelState.IDLE
 
 
-async def factories_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    name = update.message.text.strip()
+async def factory_panel_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    name    = update.message.text.strip()
     user_id = update.effective_user.id
     add_factory(user_id, name)
-    await _reply(update,
-        f"✅ Фабрика <b>{name}</b> добавлена.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_factory_mgmt_keyboard(),
-    )
-    return FactoryMgmtState.MENU
-
-
-async def factories_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    try:
-        idx = int(update.message.text.strip()) - 1
-    except ValueError:
-        await _reply(update,
-            "Введите номер из списка.", reply_markup=_factory_mgmt_keyboard()
-        )
-        return FactoryMgmtState.MENU
-    removed = delete_factory(user_id, idx)
-    if removed:
-        await _reply(update,
-            f"🗑 Фабрика <b>{removed}</b> удалена.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_factory_mgmt_keyboard(),
-        )
-    else:
-        await _reply(update,
-            "Неверный номер.", reply_markup=_factory_mgmt_keyboard()
-        )
-    return FactoryMgmtState.MENU
-
-
-# ─── Exhibition context conversation (select active) ─────────────────────────
-
-def _exhibition_select_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    exhibitions = get_exhibitions(user_id)
-    buttons = [[KeyboardButton(exhibition_display(ex))] for ex in exhibitions]
-    buttons.append([KeyboardButton("➕ Добавить выставку")])
-    buttons.append([KeyboardButton("❌ Отмена")])
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-
-
-async def exhibition_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
     ctx = load_user_context(user_id)
+    save_user_context(user_id, name, ctx["active_exhibition"])
+    await _panel_edit(context, _fp_text(user_id), _fp_keyboard(user_id))
+    return FactoryPanelState.IDLE
+
+
+# ─── Exhibition panel ─────────────────────────────────────────────────────────
+
+def _ep_text(user_id: int) -> str:
+    ctx    = load_user_context(user_id)
+    active = ctx["active_exhibition"] or "не задана"
+    return f"🎪 <b>Выставка</b>\n\nАктивная: <b>{active}</b>"
+
+
+def _ep_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    ctx         = load_user_context(user_id)
     exhibitions = get_exhibitions(user_id)
-    current = ctx["active_exhibition"] or "не задана"
-    if not exhibitions:
-        await _reply(update,
-            f"🎪 <b>Выбор выставки</b>\n\nСписок выставок пуст.\n\n"
-            "Используйте /exhibitions чтобы добавить выставку.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_main_keyboard(ctx),
-        )
-        return ConversationHandler.END
-    await _reply(update,
-        f"🎪 <b>Выбор выставки</b>\n\nТекущая: <b>{current}</b>\n\nВыберите из списка:",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_exhibition_select_keyboard(user_id),
-    )
-    return ContextState.EXHIBITION_CHOOSE
+    rows = []
+    for i, ex in enumerate(exhibitions):
+        disp = exhibition_display(ex)
+        mark = "✅ " if disp == ctx["active_exhibition"] else ""
+        rows.append([
+            InlineKeyboardButton(f"{mark}{disp}", callback_data=f"ep_sel:{i}"),
+            InlineKeyboardButton("🗑", callback_data=f"ep_del:{i}"),
+        ])
+    rows.append([InlineKeyboardButton("➕ Добавить", callback_data="ep_add")])
+    rows.append([InlineKeyboardButton("✖️ Закрыть",  callback_data="ep_done")])
+    return InlineKeyboardMarkup(rows)
 
 
-async def exhibition_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
+async def exhibition_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
+    sent = await update.message.reply_text(
+        _ep_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_ep_keyboard(user_id)
+    )
+    context.user_data["_panel_msg_id"]  = sent.message_id
+    context.user_data["_panel_chat_id"] = update.effective_chat.id
+    return ExhibitionPanelState.IDLE
 
-    if text == "❌ Отмена":
-        ctx = load_user_context(user_id)
-        await _reply(update,"Отменено.", reply_markup=_main_keyboard(ctx))
+
+async def exhibition_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data    = query.data
+
+    if data.startswith("ep_sel:"):
+        idx = int(data.split(":")[1])
+        exhibitions = get_exhibitions(user_id)
+        if 0 <= idx < len(exhibitions):
+            disp = exhibition_display(exhibitions[idx])
+            ctx  = load_user_context(user_id)
+            save_user_context(user_id, ctx["active_factory"], disp)
+        await query.edit_message_text(
+            _ep_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_ep_keyboard(user_id)
+        )
+        return ExhibitionPanelState.IDLE
+
+    if data.startswith("ep_del:"):
+        idx = int(data.split(":")[1])
+        delete_exhibition(user_id, idx)
+        await query.edit_message_text(
+            _ep_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_ep_keyboard(user_id)
+        )
+        return ExhibitionPanelState.IDLE
+
+    if data == "ep_add":
+        await query.edit_message_text(
+            "🎪 <b>Добавить выставку</b>\n\nВведите название:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data="ep_cadd")]]
+            ),
+        )
+        return ExhibitionPanelState.ADDING
+
+    if data == "ep_cadd":
+        await query.edit_message_text(
+            _ep_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_ep_keyboard(user_id)
+        )
+        return ExhibitionPanelState.IDLE
+
+    if data == "ep_skip_year":
+        name = context.user_data.get("_new_ex_name", "")
+        add_exhibition(user_id, name, None)
+        disp = exhibition_display({"name": name, "year": None})
+        ctx  = load_user_context(user_id)
+        save_user_context(user_id, ctx["active_factory"], disp)
+        await query.edit_message_text(
+            _ep_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_ep_keyboard(user_id)
+        )
+        return ExhibitionPanelState.IDLE
+
+    if data == "ep_done":
+        ctx    = load_user_context(user_id)
+        active = ctx["active_exhibition"] or "—"
+        await query.edit_message_text(f"🎪 {active}")
         return ConversationHandler.END
 
-    if text == "➕ Добавить выставку":
-        await _reply(update,
-            "✏️ Введите название выставки (например: Canton Fair):",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return ContextState.EXHIBITION_CUSTOM
-
-    # Match by display string
-    exhibitions = get_exhibitions(user_id)
-    for ex in exhibitions:
-        if exhibition_display(ex) == text:
-            ctx = load_user_context(user_id)
-            save_user_context(user_id, ctx["active_factory"], text)
-            ctx = load_user_context(user_id)
-            await _reply(update,
-                f"✅ Выставка установлена: <b>{text}</b>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=_main_keyboard(ctx),
-            )
-            return ConversationHandler.END
-
-    await _reply(update,
-        "Выберите выставку из списка или нажмите «➕ Добавить выставку».",
-        reply_markup=_exhibition_select_keyboard(user_id),
-    )
-    return ContextState.EXHIBITION_CHOOSE
+    return ExhibitionPanelState.IDLE
 
 
-async def exhibition_custom(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Save exhibition name and ask for year."""
+async def exhibition_panel_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     name = update.message.text.strip()
-    context.user_data["new_exhibition_name"] = name
-    await _reply(update,
-        f"📅 Введите год выставки (например: <code>2026</code>) или /skip чтобы пропустить:",
-        parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardRemove(),
+    context.user_data["_new_ex_name"] = name
+    await _panel_edit(
+        context,
+        f"🎪 <b>Добавить выставку</b>\n\nНазвание: <b>{name}</b>\n\n"
+        "Введите год (например: <code>2026</code>) или нажмите «Пропустить»:",
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton("Пропустить год", callback_data="ep_skip_year")],
+            [InlineKeyboardButton("❌ Отмена",       callback_data="ep_cadd")],
+        ]),
     )
-    return ContextState.EXHIBITION_CUSTOM
+    return ExhibitionPanelState.ADDING_YEAR
 
 
-async def exhibition_custom_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Receive year (or /skip), save exhibition and set active."""
-    year = update.message.text.strip() if update.message.text else None
-    name = context.user_data.get("new_exhibition_name", "")
+async def exhibition_panel_add_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    year    = update.message.text.strip() or None
+    name    = context.user_data.get("_new_ex_name", "")
     user_id = update.effective_user.id
     add_exhibition(user_id, name, year)
-    display = exhibition_display({"name": name, "year": year})
-    ctx = load_user_context(user_id)
-    save_user_context(user_id, ctx["active_factory"], display)
-    ctx = load_user_context(user_id)
-    await _reply(update,
-        f"✅ Выставка добавлена и установлена: <b>{display}</b>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx),
-    )
-    return ConversationHandler.END
+    disp = exhibition_display({"name": name, "year": year})
+    ctx  = load_user_context(user_id)
+    save_user_context(user_id, ctx["active_factory"], disp)
+    await _panel_edit(context, _ep_text(user_id), _ep_keyboard(user_id))
+    return ExhibitionPanelState.IDLE
 
 
-async def exhibition_custom_skip_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle /skip for year step — save with no year."""
-    name = context.user_data.get("new_exhibition_name", "")
-    user_id = update.effective_user.id
-    add_exhibition(user_id, name, None)
-    display = exhibition_display({"name": name, "year": None})
-    ctx = load_user_context(user_id)
-    save_user_context(user_id, ctx["active_factory"], display)
-    ctx = load_user_context(user_id)
-    await _reply(update,
-        f"✅ Выставка добавлена и установлена: <b>{display}</b>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_main_keyboard(ctx),
-    )
-    return ConversationHandler.END
+# ─── Settings panel ───────────────────────────────────────────────────────────
 
-
-# ─── Exhibition management conversation (/exhibitions) ───────────────────────
-
-def _exhibition_mgmt_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("➕ Добавить выставку")],
-            [KeyboardButton("📋 Список"), KeyboardButton("🗑 Удалить")],
-            [KeyboardButton("❌ Выход")],
-        ],
-        resize_keyboard=True,
-    )
-
-
-async def exhibitions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await _reply(update,
-        "🎪 <b>Управление выставками</b>\n\nВыберите действие:",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_exhibition_mgmt_keyboard(),
-    )
-    return ExhibitionMgmtState.MENU
-
-
-async def exhibitions_menu_handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-
-    if text == "❌ Выход":
-        ctx = load_user_context(user_id)
-        await _reply(update,"Готово.", reply_markup=_main_keyboard(ctx))
-        return ConversationHandler.END
-
-    if text == "📋 Список":
-        exhibitions = get_exhibitions(user_id)
-        if not exhibitions:
-            msg = "Список выставок пуст."
+def _sp_keyboard(settings: dict) -> InlineKeyboardMarkup:
+    rows = []
+    for key, label in SETTINGS_KEYS:
+        if key == "debug_mode":
+            state = "🟢 ВКЛ" if settings.get(key) else "🔴 ВЫКЛ"
+            rows.append([InlineKeyboardButton(f"Debug: {state}", callback_data=f"sp_toggle:{key}")])
         else:
-            lines = [f"{i+1}. {exhibition_display(ex)}" for i, ex in enumerate(exhibitions)]
-            msg = "🎪 <b>Ваши выставки:</b>\n\n" + "\n".join(lines)
-        await _reply(update,msg, parse_mode=ParseMode.HTML,
-                                        reply_markup=_exhibition_mgmt_keyboard())
-        return ExhibitionMgmtState.MENU
-
-    if text == "➕ Добавить выставку":
-        await _reply(update,
-            "✏️ Введите название выставки (например: Canton Fair):",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return ExhibitionMgmtState.ADD_NAME
-
-    if text == "🗑 Удалить":
-        exhibitions = get_exhibitions(user_id)
-        if not exhibitions:
-            await _reply(update,"Список пуст.", reply_markup=_exhibition_mgmt_keyboard())
-            return ExhibitionMgmtState.MENU
-        lines = [f"{i+1}. {exhibition_display(ex)}" for i, ex in enumerate(exhibitions)]
-        await _reply(update,
-            "🗑 <b>Удалить выставку</b>\n\n" + "\n".join(lines) +
-            "\n\nВведите номер для удаления:",
-            parse_mode=ParseMode.HTML,
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return ExhibitionMgmtState.DELETE_CHOOSE
-
-    await _reply(update,"Выберите действие.", reply_markup=_exhibition_mgmt_keyboard())
-    return ExhibitionMgmtState.MENU
+            val = settings.get(key, "")
+            rows.append([InlineKeyboardButton(f"✏️ {label}: {val}", callback_data=f"sp_edit:{key}")])
+    rows.append([InlineKeyboardButton("✖️ Закрыть", callback_data="sp_done")])
+    return InlineKeyboardMarkup(rows)
 
 
-async def exhibitions_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    name = update.message.text.strip()
-    context.user_data["new_exhibition_name"] = name
-    await _reply(update,
-        f"📅 Введите год выставки (например: <code>2026</code>) или /skip чтобы пропустить:",
-        parse_mode=ParseMode.HTML,
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return ExhibitionMgmtState.ADD_YEAR
-
-
-async def exhibitions_add_year(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    year = update.message.text.strip() or None
-    name = context.user_data.get("new_exhibition_name", "")
-    user_id = update.effective_user.id
-    add_exhibition(user_id, name, year)
-    await _reply(update,
-        f"✅ Выставка <b>{exhibition_display({'name': name, 'year': year})}</b> добавлена.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_exhibition_mgmt_keyboard(),
-    )
-    return ExhibitionMgmtState.MENU
-
-
-async def exhibitions_add_year_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    name = context.user_data.get("new_exhibition_name", "")
-    user_id = update.effective_user.id
-    add_exhibition(user_id, name, None)
-    await _reply(update,
-        f"✅ Выставка <b>{name}</b> добавлена.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_exhibition_mgmt_keyboard(),
-    )
-    return ExhibitionMgmtState.MENU
-
-
-async def exhibitions_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    try:
-        idx = int(update.message.text.strip()) - 1
-    except ValueError:
-        await _reply(update,
-            "Введите номер из списка.", reply_markup=_exhibition_mgmt_keyboard()
-        )
-        return ExhibitionMgmtState.MENU
-    removed = delete_exhibition(user_id, idx)
-    if removed:
-        await _reply(update,
-            f"🗑 Выставка <b>{exhibition_display(removed)}</b> удалена.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_exhibition_mgmt_keyboard(),
-        )
-    else:
-        await _reply(update,
-            "Неверный номер.", reply_markup=_exhibition_mgmt_keyboard()
-        )
-    return ExhibitionMgmtState.MENU
-
-
-# ─── Settings conversation ──────────────────────────────────────────────────
-
-def _settings_keyboard() -> ReplyKeyboardMarkup:
-    buttons = []
-    for i, (key, label) in enumerate(SETTINGS_KEYS, 1):
-        buttons.append([KeyboardButton(f"{i}. {label}")])
-    buttons.append([KeyboardButton("✅ Готово")])
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-
-
-async def settings_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def settings_panel_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     settings = load_settings()
-    await _reply(update,
-        format_settings(settings),
-        parse_mode=ParseMode.HTML,
-        reply_markup=_settings_keyboard(),
+    sent = await update.message.reply_text(
+        format_settings(settings), parse_mode=ParseMode.HTML, reply_markup=_sp_keyboard(settings)
     )
-    return SettingsState.CHOOSING
+    context.user_data["_panel_msg_id"]  = sent.message_id
+    context.user_data["_panel_chat_id"] = update.effective_chat.id
+    return SettingsPanelState.IDLE
 
 
-async def settings_choose(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    text = update.message.text.strip()
+async def settings_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    data  = query.data
 
-    if text == "✅ Готово":
-        user_id = update.effective_user.id
-        ctx = load_user_context(user_id)
-        await _reply(update,
-            "✅ Настройки сохранены.",
-            reply_markup=_main_keyboard(ctx),
+    if data.startswith("sp_edit:"):
+        key      = data.split(":", 1)[1]
+        settings = load_settings()
+        label    = next((l for k, l in SETTINGS_KEYS if k == key), key)
+        current  = settings.get(key, "")
+        context.user_data["_editing_key"]   = key
+        context.user_data["_editing_label"] = label
+        await query.edit_message_text(
+            f"⚙️ <b>{label}</b>\n\nТекущее: <code>{current}</code>\n\nВведите новое значение:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Отмена", callback_data="sp_cancel")]]
+            ),
         )
+        return SettingsPanelState.EDITING
+
+    if data.startswith("sp_toggle:"):
+        key      = data.split(":", 1)[1]
+        settings = load_settings()
+        settings[key] = not bool(settings.get(key, False))
+        save_settings(settings)
+        await query.edit_message_text(
+            format_settings(settings), parse_mode=ParseMode.HTML, reply_markup=_sp_keyboard(settings)
+        )
+        return SettingsPanelState.IDLE
+
+    if data == "sp_cancel":
+        settings = load_settings()
+        await query.edit_message_text(
+            format_settings(settings), parse_mode=ParseMode.HTML, reply_markup=_sp_keyboard(settings)
+        )
+        return SettingsPanelState.IDLE
+
+    if data == "sp_done":
+        await query.edit_message_text("⚙️ Настройки сохранены.")
         return ConversationHandler.END
 
-    for i, (key, label) in enumerate(SETTINGS_KEYS, 1):
-        if text.startswith(f"{i}."):
-            settings = load_settings()
-
-            # debug_mode is a boolean toggle — flip immediately, no text input needed
-            if key == "debug_mode":
-                settings["debug_mode"] = not bool(settings.get("debug_mode", False))
-                save_settings(settings)
-                state = "ВКЛ 🟢" if settings["debug_mode"] else "ВЫКЛ 🔴"
-                await _reply(update,
-                    f"✅ <b>Debug trace</b>: {state}",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=_settings_keyboard(),
-                )
-                await _reply(update,
-                    format_settings(settings), parse_mode=ParseMode.HTML
-                )
-                return SettingsState.CHOOSING
-
-            context.user_data["editing_key"] = key
-            context.user_data["editing_label"] = label
-            current = settings[key]
-            await _reply(update,
-                f"✏️ <b>{label}</b>\n\nТекущее значение: <code>{current}</code>\n\nВведите новое значение:",
-                parse_mode=ParseMode.HTML,
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return SettingsState.EDITING
-
-    await _reply(update,"Выберите параметр из списка.", reply_markup=_settings_keyboard())
-    return SettingsState.CHOOSING
+    return SettingsPanelState.IDLE
 
 
-async def settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    key = context.user_data.get("editing_key")
-    label = context.user_data.get("editing_label", key)
-
+async def settings_panel_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    key   = context.user_data.get("_editing_key")
+    label = context.user_data.get("_editing_label", key)
     try:
         value = float(update.message.text.replace(",", ".").strip())
     except ValueError:
-        await _reply(update,
-            "⚠️ Введите число (напр. <code>0.59</code> или <code>90.0</code>).",
-            parse_mode=ParseMode.HTML,
+        await _panel_edit(
+            context,
+            f"⚙️ <b>{label}</b>\n\n⚠️ Введите число (напр. <code>0.59</code>)\n\nВведите новое значение:",
+            InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="sp_cancel")]]),
         )
-        return SettingsState.EDITING
-
+        return SettingsPanelState.EDITING
     settings = load_settings()
     settings[key] = value
     save_settings(settings)
-
-    await _reply(update,
-        f"✅ <b>{label}</b> обновлено: <code>{value}</code>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_settings_keyboard(),
-    )
-
-    settings = load_settings()
-    await _reply(update,
-        format_settings(settings),
-        parse_mode=ParseMode.HTML,
-        reply_markup=_settings_keyboard(),
-    )
-    return SettingsState.CHOOSING
+    await _panel_edit(context, format_settings(settings), _sp_keyboard(settings))
+    return SettingsPanelState.IDLE
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────
@@ -1143,87 +954,59 @@ def main() -> None:
         allow_reentry=True,
     )
 
-    factory_conv = ConversationHandler(
+    factory_panel_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex("^🏭 Фабрика$"), factory_start),
-            CommandHandler("factory", factory_start),
+            MessageHandler(filters.Regex("^🏭 Фабрика$"), factory_panel_open),
+            CommandHandler("factory",   factory_panel_open),
+            CommandHandler("factories", factory_panel_open),
         ],
         states={
-            ContextState.FACTORY_CHOOSE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, factory_choose)
+            FactoryPanelState.IDLE: [
+                CallbackQueryHandler(factory_panel_cb, pattern=r"^fp_"),
             ],
-            ContextState.FACTORY_CUSTOM: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, factory_custom)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        allow_reentry=True,
-    )
-
-    factory_mgmt_conv = ConversationHandler(
-        entry_points=[CommandHandler("factories", factories_menu)],
-        states={
-            FactoryMgmtState.MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, factories_menu_handle)
-            ],
-            FactoryMgmtState.ADD_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, factories_add)
-            ],
-            FactoryMgmtState.DELETE_CHOOSE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, factories_delete)
+            FactoryPanelState.ADDING: [
+                CallbackQueryHandler(factory_panel_cb, pattern=r"^fp_cadd$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, factory_panel_add_name),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
     )
 
-    exhibition_conv = ConversationHandler(
+    exhibition_panel_conv = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex("^🎪 Выставка$"), exhibition_start),
-            CommandHandler("exhibition", exhibition_start),
+            MessageHandler(filters.Regex("^🎪 Выставка$"), exhibition_panel_open),
+            CommandHandler("exhibition",  exhibition_panel_open),
+            CommandHandler("exhibitions", exhibition_panel_open),
         ],
         states={
-            ContextState.EXHIBITION_CHOOSE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, exhibition_choose)
+            ExhibitionPanelState.IDLE: [
+                CallbackQueryHandler(exhibition_panel_cb, pattern=r"^ep_"),
             ],
-            ContextState.EXHIBITION_CUSTOM: [
-                CommandHandler("skip", exhibition_custom_skip_year),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, exhibition_custom_year),
+            ExhibitionPanelState.ADDING: [
+                CallbackQueryHandler(exhibition_panel_cb, pattern=r"^ep_cadd$|^ep_skip_year$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, exhibition_panel_add_name),
             ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        allow_reentry=True,
-    )
-
-    exhibition_mgmt_conv = ConversationHandler(
-        entry_points=[CommandHandler("exhibitions", exhibitions_menu)],
-        states={
-            ExhibitionMgmtState.MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, exhibitions_menu_handle)
-            ],
-            ExhibitionMgmtState.ADD_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, exhibitions_add_name)
-            ],
-            ExhibitionMgmtState.ADD_YEAR: [
-                CommandHandler("skip", exhibitions_add_year_skip),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, exhibitions_add_year),
-            ],
-            ExhibitionMgmtState.DELETE_CHOOSE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, exhibitions_delete)
+            ExhibitionPanelState.ADDING_YEAR: [
+                CallbackQueryHandler(exhibition_panel_cb, pattern=r"^ep_skip_year$|^ep_cadd$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, exhibition_panel_add_year),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
     )
 
-    settings_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^⚙️ Настройки$"), settings_start)],
+    settings_panel_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.Regex("^⚙️ Настройки$"), settings_panel_open),
+        ],
         states={
-            SettingsState.CHOOSING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, settings_choose)
+            SettingsPanelState.IDLE: [
+                CallbackQueryHandler(settings_panel_cb, pattern=r"^sp_"),
             ],
-            SettingsState.EDITING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, settings_edit)
+            SettingsPanelState.EDITING: [
+                CallbackQueryHandler(settings_panel_cb, pattern=r"^sp_cancel$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, settings_panel_edit_value),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -1252,12 +1035,10 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^📚 Каталог$"), catalog_open))
     app.add_handler(catalog_edit_conv)
-    app.add_handler(factory_mgmt_conv)
-    app.add_handler(exhibition_mgmt_conv)
-    app.add_handler(factory_conv)
-    app.add_handler(exhibition_conv)
+    app.add_handler(factory_panel_conv)
+    app.add_handler(exhibition_panel_conv)
     app.add_handler(product_conv)
-    app.add_handler(settings_conv)
+    app.add_handler(settings_panel_conv)
     app.add_handler(CallbackQueryHandler(catalog_callback))
 
     logger.info("Bot started, polling...")

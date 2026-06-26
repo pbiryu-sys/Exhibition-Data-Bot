@@ -467,5 +467,51 @@
     "media_message_ids": [],
     "text_message_id": 689,
     "card_chat_id": 348641645
+  },
+  {
+    "id": "628e0312-9fea-4f42-965a-f65efae7851a",
+    "created_by": 348641645,
+    "created_at": 1782473998.4929519,
+    "updated_by": 348641645,
+    "updated_at": 1782473999.1015923,
+    "sku": "АТМ000",
+    "category": "Велотренажер",
+    "fob_usd": 143.0,
+    "qty_40hq": 987,
+    "kz_price": 221820.92,
+    "factory": "Lijiujia",
+    "exhibition": "CF 2026",
+    "note": "Подумать",
+    "hero_media": [
+      {
+        "type": "photo",
+        "file_id": "AgACAgIAAxkBAAIBxWo-RM4I8HJsEqlP7VJyfZJeYCERAAK0F2sbV6zwSV3Q9R1eQnyKAQADAgADeQADPAQ",
+        "timestamp": "2026-06-26T11:39"
+      }
+    ],
+    "media_message_ids": [
+      697
+    ],
+    "text_message_id": 698,
+    "card_chat_id": 348641645
+  },
+  {
+    "id": "7c7e9002-53c9-4ee3-ab76-2591e58a96b9",
+    "created_by": 348641645,
+    "created_at": 1782474042.9885898,
+    "updated_by": 348641645,
+    "updated_at": 1782474043.1543765,
+    "sku": "АТМ000",
+    "category": "Велотренажер",
+    "fob_usd": 143.0,
+    "qty_40hq": 987,
+    "kz_price": 221820.92,
+    "factory": "Lijiujia",
+    "exhibition": "CF 2026",
+    "note": "Подумать",
+    "hero_media": [],
+    "media_message_ids": [],
+    "text_message_id": 708,
+    "card_chat_id": 348641645
   }
 ]

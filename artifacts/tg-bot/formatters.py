@@ -39,7 +39,7 @@ def format_product_card(data: dict, settings: dict) -> str:
         f"💵 FOB: <b>${_input_fob:,.2f}</b>  ·  {_input_qty:,} шт / 40HQ",
         f"🚢 Контейнер: <b>${_input_fob * _input_qty:,.0f}</b>",
         "",
-        f"💴 Себестоимость: <b>{calc['U5']:,.0f} ₸</b>",
+        f"💴 Себестоимость (без НДС): <b>{calc['V5'] / _input_qty:,.0f} ₸</b>",
         f"🏷 Розничная цена: <b>{calc['G5']:,.0f} ₸</b>",
     ]
 
@@ -118,7 +118,7 @@ def format_card_from_db(p: dict, settings: dict) -> str:
         f"💵 FOB: <b>${fob_usd:,.2f}</b>  ·  {qty_40hq:,} шт / 40HQ",
         f"🚢 Контейнер: <b>${fob_usd * qty_40hq:,.0f}</b>",
         "",
-        f"💴 Себестоимость: <b>{calc['U5']:,.0f} ₸</b>",
+        f"💴 Себестоимость (без НДС): <b>{calc['V5'] / qty_40hq if qty_40hq else 0:,.0f} ₸</b>",
         f"🏷 Розничная цена: <b>{calc['G5']:,.0f} ₸</b>",
     ]
 

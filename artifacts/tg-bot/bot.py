@@ -278,8 +278,12 @@ SETTINGS_KEYS = [
     ("terminal_fee_kzt", "Терминал Q5, ₸"),
     ("storage_fee_kzt", "Хранение R5, ₸"),
     ("forwarder_fee_kzt", "Экспедитор S5, ₸"),
+    ("google_share_email", "Google email (для доступа к файлам)"),
     ("debug_mode", "Debug trace (вкл/выкл)"),
 ]
+
+# Keys that store text strings (not numbers)
+SETTINGS_STRING_KEYS = {"google_share_email"}
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -531,7 +535,6 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         saved_id = edit_pid
     else:
         saved = save_product(product_record, created_by=user_id)
-        await google_export.export_product(saved, settings, context.bot)
         saved_id = saved["id"]
 
     chat_id = update.effective_chat.id
@@ -566,9 +569,16 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         saved_product = get_product(saved_id)
         if saved_product:
             import asyncio
-            asyncio.ensure_future(
-                google_export.export_product(saved_product, settings, context.bot)
-            )
+            import logging as _logging
+            _log = _logging.getLogger(__name__)
+
+            async def _do_export():
+                try:
+                    await google_export.export_product(saved_product, settings, context.bot)
+                except Exception as _exc:
+                    _log.error("Auto-export task raised unhandled exception: %s", _exc)
+
+            asyncio.ensure_future(_do_export())
 
     # Restore keyboard via a transient message, then delete all flow clutter
     confirm_msg = await context.bot.send_message(
@@ -992,15 +1002,21 @@ async def settings_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def settings_panel_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     key   = context.user_data.get("_editing_key")
     label = context.user_data.get("_editing_label", key)
-    try:
-        value = float(update.message.text.replace(",", ".").strip())
-    except ValueError:
-        await _panel_edit(
-            context,
-            f"⚙️ <b>{label}</b>\n\n⚠️ Введите число (напр. <code>0.59</code>)\n\nВведите новое значение:",
-            InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="sp_cancel")]]),
-        )
-        return SettingsPanelState.EDITING
+    raw   = update.message.text.strip()
+
+    if key in SETTINGS_STRING_KEYS:
+        value: float | str = raw
+    else:
+        try:
+            value = float(raw.replace(",", "."))
+        except ValueError:
+            await _panel_edit(
+                context,
+                f"⚙️ <b>{label}</b>\n\n⚠️ Введите число (напр. <code>0.59</code>)\n\nВведите новое значение:",
+                InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="sp_cancel")]]),
+            )
+            return SettingsPanelState.EDITING
+
     settings = load_settings()
     settings[key] = value
     save_settings(settings)

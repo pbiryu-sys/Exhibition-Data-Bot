@@ -174,6 +174,7 @@ def format_card_from_db(p: dict, settings: dict) -> str:
 
 
 def format_settings(settings: dict) -> str:
+    share_email = settings.get("google_share_email") or "не задан"
     lines = [
         "⚙️ <b>Текущие настройки</b>",
         "",
@@ -186,7 +187,8 @@ def format_settings(settings: dict) -> str:
         f"7. Терминал Q5:  <b>{settings['terminal_fee_kzt']:,.0f} ₸</b>",
         f"8. Хранение R5:  <b>{settings['storage_fee_kzt']:,.0f} ₸</b>",
         f"9. Экспедитор S5:<b>{settings['forwarder_fee_kzt']:,.0f} ₸</b>",
-        f"10. Debug trace: <b>{'ВКЛ 🟢' if settings.get('debug_mode') else 'ВЫКЛ 🔴'}</b>",
+        f"10. Google email: <b>{share_email}</b>",
+        f"11. Debug trace: <b>{'ВКЛ 🟢' if settings.get('debug_mode') else 'ВЫКЛ 🔴'}</b>",
         "",
         "Нажмите кнопку для изменения параметра.",
     ]

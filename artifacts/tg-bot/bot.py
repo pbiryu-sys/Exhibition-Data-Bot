@@ -7,24 +7,30 @@ from telegram import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
     KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     ConversationHandler,
+    CallbackQueryHandler,
     filters,
     ContextTypes,
 )
 from telegram.constants import ParseMode
 
-from states import ProductState, SettingsState, ContextState, FactoryMgmtState, ExhibitionMgmtState
-from pricing import load_settings, save_settings
+from states import ProductState, SettingsState, ContextState, FactoryMgmtState, ExhibitionMgmtState, CatalogEditState
+from pricing import load_settings, save_settings, calculate_cost_per_unit
 from formatters import format_product_card, format_settings
 from context_store import (
     load_user_context, save_user_context, clear_user_context,
     get_factories, add_factory, delete_factory,
     get_exhibitions, add_exhibition, delete_exhibition, exhibition_display,
+)
+from products import (
+    save_product, get_products, get_product, delete_product, update_product,
 )
 
 logging.basicConfig(
@@ -95,7 +101,7 @@ def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
         [
             [KeyboardButton("➕ Новый товар")],
             [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
-            [KeyboardButton("⚙️ Настройки")],
+            [KeyboardButton("📚 Каталог"), KeyboardButton("⚙️ Настройки")],
         ],
         resize_keyboard=True,
     )
@@ -127,6 +133,240 @@ def _main_menu_text(ctx: dict) -> str:
         f"🏭 Активная фабрика: <b>{factory}</b>"
         f"{hint}"
     )
+
+
+# ─── Catalog helpers ────────────────────────────────────────────────────────
+
+def _catalog_text(p: dict, index: int, total: int) -> str:
+    from datetime import datetime
+    dt = datetime.fromtimestamp(p.get("created_at", 0)).strftime("%d.%m.%Y")
+    photo_line = "📸 <b>Фото:</b> есть" if p.get("photo_file_id") else ""
+    note = p.get("note") or "—"
+    lines = [
+        f"📦 <b>{p['sku']}</b>",
+        f"🏷 {p['category']}",
+        f"🏭 {p['factory']}",
+        f"🎪 {p['exhibition']}",
+        "",
+        f"💵 FOB: <b>${p['fob_usd']:,.2f}</b> · {p['qty_40hq']:,} шт / 40HQ",
+        f"💴 KZ цена: <b>₸{p['kz_price']:,.0f}</b>",
+        f"📝 {note}",
+    ]
+    if photo_line:
+        lines.append(photo_line)
+    lines += ["", f"📅 {dt}   <i>{index + 1} из {total}</i>"]
+    return "\n".join(lines)
+
+
+def _catalog_keyboard(index: int, total: int, p: dict) -> InlineKeyboardMarkup:
+    pid = p["id"]
+    prev_i = (index - 1) % total
+    next_i = (index + 1) % total
+
+    if total > 1:
+        nav_row = [
+            InlineKeyboardButton("⬅️", callback_data=f"cprev:{prev_i}"),
+            InlineKeyboardButton(f"{index + 1} / {total}", callback_data="cnoop"),
+            InlineKeyboardButton("➡️", callback_data=f"cnext:{next_i}"),
+        ]
+    else:
+        nav_row = [InlineKeyboardButton("1 / 1", callback_data="cnoop")]
+
+    rows = [
+        nav_row,
+        [
+            InlineKeyboardButton("✏️ Изменить", callback_data=f"cedit:{pid}"),
+            InlineKeyboardButton("🗑 Удалить", callback_data=f"cdel:{pid}:{index}"),
+        ],
+    ]
+    if p.get("photo_file_id"):
+        rows.append([InlineKeyboardButton("📸 Показать фото", callback_data=f"cphoto:{pid}")])
+    return InlineKeyboardMarkup(rows)
+
+
+# ─── Catalog handlers ────────────────────────────────────────────────────────
+
+async def catalog_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    products = get_products(user_id)
+    ctx = load_user_context(user_id)
+
+    if not products:
+        await _reply(update,
+            "📚 <b>Каталог пуст.</b>\n\nДобавьте товар через «➕ Новый товар».",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_main_keyboard(ctx),
+        )
+        return
+
+    index = 0
+    p = products[index]
+    await update.message.reply_text(
+        _catalog_text(p, index, len(products)),
+        parse_mode=ParseMode.HTML,
+        reply_markup=_catalog_keyboard(index, len(products), p),
+    )
+
+
+async def catalog_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data = query.data
+
+    if data == "cnoop":
+        return
+
+    products = get_products(user_id)
+
+    if data.startswith("cprev:") or data.startswith("cnext:"):
+        index = int(data.split(":")[1])
+        if not products:
+            await query.edit_message_text("📚 Каталог пуст.", parse_mode=ParseMode.HTML)
+            return
+        index = max(0, min(index, len(products) - 1))
+        p = products[index]
+        await query.edit_message_text(
+            _catalog_text(p, index, len(products)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_keyboard(index, len(products), p),
+        )
+
+    elif data.startswith("cdel:"):
+        _, pid, curr = data.split(":")
+        delete_product(user_id, pid)
+        products = get_products(user_id)
+        if not products:
+            await query.edit_message_text("📚 <b>Каталог пуст.</b>", parse_mode=ParseMode.HTML)
+            return
+        index = min(int(curr), len(products) - 1)
+        p = products[index]
+        await query.edit_message_text(
+            _catalog_text(p, index, len(products)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_catalog_keyboard(index, len(products), p),
+        )
+
+    elif data.startswith("cphoto:"):
+        pid = data.split(":")[1]
+        p = get_product(user_id, pid)
+        if p and p.get("photo_file_id"):
+            await query.message.reply_photo(photo=p["photo_file_id"])
+        else:
+            await query.answer("Фото не найдено", show_alert=True)
+
+
+# ─── Catalog edit conversation ───────────────────────────────────────────────
+
+async def catalog_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    pid = query.data.split(":", 1)[1]
+
+    p = get_product(user_id, pid)
+    if not p:
+        await query.answer("Товар не найден", show_alert=True)
+        return ConversationHandler.END
+
+    context.user_data.clear()
+    context.user_data["_edit_product_id"] = pid
+    context.user_data["factory"]    = p["factory"]
+    context.user_data["exhibition"] = p["exhibition"]
+
+    await query.message.reply_text(
+        f"✏️ <b>Редактирование: {p['sku']}</b>\n\n"
+        "Отправьте новое фото или /skip чтобы оставить прежнее.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return CatalogEditState.PHOTO
+
+
+async def catalog_edit_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["photo_file_id"] = update.message.photo[-1].file_id
+    await _reply(update,
+        f"📋 <b>Данные товара</b>\n\n{DATA_PROMPT}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return CatalogEditState.DATA
+
+
+async def catalog_edit_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    pid = context.user_data.get("_edit_product_id")
+    existing = get_product(update.effective_user.id, pid) if pid else None
+    context.user_data["photo_file_id"] = existing.get("photo_file_id") if existing else None
+    await _reply(update,
+        f"📋 <b>Данные товара</b>\n\n{DATA_PROMPT}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return CatalogEditState.DATA
+
+
+async def catalog_edit_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    lines = [l.strip() for l in update.message.text.strip().splitlines() if l.strip()]
+
+    if len(lines) < 4:
+        names = ["Артикул", "Категория", "FOB цена", "Кол-во 40HQ"]
+        missing = names[len(lines):]
+        await _reply(update,
+            "⚠️ Не хватает полей:\n" + "\n".join(f"• {m}" for m in missing) +
+            "\n\nОтправьте данные снова.",
+            parse_mode=ParseMode.HTML,
+        )
+        return CatalogEditState.DATA
+
+    article  = lines[0]
+    category = lines[1]
+    fob_raw  = lines[2]
+    qty_raw  = lines[3]
+    note     = " ".join(lines[4:]) if len(lines) > 4 else "—"
+
+    try:
+        price = float(fob_raw.replace(",", ".").replace(" ", ""))
+        if price <= 0:
+            raise ValueError
+    except ValueError:
+        await _reply(update,
+            f"⚠️ Неверная FOB цена: <code>{fob_raw}</code>\n\nОтправьте данные снова.",
+            parse_mode=ParseMode.HTML,
+        )
+        return CatalogEditState.DATA
+
+    try:
+        qty = int(qty_raw.replace(" ", "").replace(",", ""))
+        if qty <= 0:
+            raise ValueError
+    except ValueError:
+        await _reply(update,
+            f"⚠️ Неверное количество: <code>{qty_raw}</code>\n\nОтправьте данные снова.",
+            parse_mode=ParseMode.HTML,
+        )
+        return CatalogEditState.DATA
+
+    context.user_data.update({"article": article, "price": price, "qty_40hq": qty, "note": note})
+
+    if category not in ALLOWED_CATEGORIES:
+        await _reply(update,
+            f"⚠️ Категория <b>{category}</b> не распознана.\n\nВыберите из списка:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_category_keyboard(),
+        )
+        return CatalogEditState.CATEGORY_PICK
+
+    context.user_data["category"] = category
+    return await finish_product(update, context)
+
+
+async def catalog_edit_category_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if text not in ALLOWED_CATEGORIES:
+        await _reply(update, "Выберите категорию из кнопок:", reply_markup=_category_keyboard())
+        return CatalogEditState.CATEGORY_PICK
+    context.user_data["category"] = text
+    return await finish_product(update, context)
 
 
 # ─── /start ────────────────────────────────────────────────────────────────
@@ -303,18 +543,38 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     card_text = format_product_card(data, settings)
 
     user_id = update.effective_user.id
+
+    # Save to persistent catalog
+    calc = calculate_cost_per_unit(data["price"], data["qty_40hq"], settings)
+    edit_pid = data.pop("_edit_product_id", None)
+    product_record = {
+        "sku":          data["article"],
+        "category":     data["category"],
+        "fob_usd":      data["price"],
+        "qty_40hq":     data["qty_40hq"],
+        "kz_price":     calc["G5"],
+        "factory":      data["factory"],
+        "exhibition":   data["exhibition"],
+        "note":         data.get("note", "—"),
+        "photo_file_id": data.get("photo_file_id"),
+    }
+    if edit_pid:
+        update_product(user_id, edit_pid, product_record)
+    else:
+        save_product(user_id, product_record)
+
     ctx = load_user_context(user_id)
     reply_markup = _main_keyboard(ctx)
 
     if data.get("photo_file_id"):
-        sent = await _reply_photo(update,
+        await _reply_photo(update,
             photo=data["photo_file_id"],
             caption=card_text,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup,
         )
     else:
-        sent = await _reply(update,
+        await _reply(update,
             card_text,
             parse_mode=ParseMode.HTML,
             reply_markup=reply_markup,
@@ -970,13 +1230,35 @@ def main() -> None:
         allow_reentry=True,
     )
 
+    catalog_edit_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(catalog_edit_start, pattern=r"^cedit:")],
+        states={
+            CatalogEditState.PHOTO: [
+                MessageHandler(filters.PHOTO, catalog_edit_photo),
+                CommandHandler("skip", catalog_edit_skip_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, catalog_edit_photo),
+            ],
+            CatalogEditState.DATA: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, catalog_edit_data),
+            ],
+            CatalogEditState.CATEGORY_PICK: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, catalog_edit_category_pick),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex("^📚 Каталог$"), catalog_open))
+    app.add_handler(catalog_edit_conv)
     app.add_handler(factory_mgmt_conv)
     app.add_handler(exhibition_mgmt_conv)
     app.add_handler(factory_conv)
     app.add_handler(exhibition_conv)
     app.add_handler(product_conv)
     app.add_handler(settings_conv)
+    app.add_handler(CallbackQueryHandler(catalog_callback))
 
     logger.info("Bot started, polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

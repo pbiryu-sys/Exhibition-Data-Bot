@@ -30,3 +30,9 @@ class ExhibitionMgmtState(IntEnum):
     ADD_NAME = auto()
     ADD_YEAR = auto()
     DELETE_CHOOSE = auto()
+
+
+class CatalogEditState(IntEnum):
+    PHOTO = auto()
+    DATA = auto()
+    CATEGORY_PICK = auto()

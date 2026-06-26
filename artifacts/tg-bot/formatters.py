@@ -3,11 +3,25 @@ from pricing import calculate_cost_per_unit
 
 
 def format_product_card(data: dict, settings: dict) -> str:
+    # ── Single shared input state ─────────────────────────────────────────────
+    # All pricing outputs (card + debug trace) derive from ONE call.
+    # qty_40hq is bound here from data["qty_40hq"] and nowhere else.
+    _input_fob = data["price"]
+    _input_qty = data["qty_40hq"]
+
     calc = calculate_cost_per_unit(
-        fob_price_usd=data["price"],
-        qty_40hq=data["qty_40hq"],
+        fob_price_usd=_input_fob,
+        qty_40hq=_input_qty,
         settings=settings,
     )
+
+    # ── Input state validation ─────────────────────────────────────────────────
+    # calc["E5"] is the qty the pricing engine actually used (set from qty_40hq).
+    # If it ever diverges from the input, all downstream cells are invalid.
+    if calc["E5"] != _input_qty:
+        raise ValueError(
+            f"INPUT_STATE_MISMATCH: bot_qty={_input_qty} != engine_qty={calc['E5']}"
+        )
 
     year       = datetime.now().year
     factory    = data["factory"]

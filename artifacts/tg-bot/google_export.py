@@ -129,6 +129,13 @@ def _worksheet(sh):
     return ws
 
 
+def _to_sheet_image(url: str) -> str:
+    """Return a Google Sheets =IMAGE() formula, or empty string if no URL."""
+    if not url:
+        return ""
+    return f'=IMAGE("{url}")'
+
+
 def _append_row(product: dict, settings: dict,
                 photo_links: list, video_links: list, doc_links: list,
                 sheet_id: str) -> str:
@@ -174,7 +181,7 @@ def _append_row(product: dict, settings: dict,
         round(sell_kzt, 2),
         product.get("exhibition", ""),
         dt,
-        "\n".join(photo_links),
+        _to_sheet_image(photo_links[0]) if photo_links else "",
         "\n".join(video_links),
         "\n".join(doc_links),
     ]
@@ -188,7 +195,7 @@ def _append_row(product: dict, settings: dict,
         )
 
     logger.info(">>> APPEND ROW — product=%s sku=%s", product.get("id"), row[1])
-    ws.append_row(row, value_input_option="RAW", insert_data_option="INSERT_ROWS")
+    ws.append_row(row, value_input_option="USER_ENTERED", insert_data_option="INSERT_ROWS")
     logger.info(">>> APPEND ROW SUCCESS — sheet=%s", sh.url)
     return sh.url
 

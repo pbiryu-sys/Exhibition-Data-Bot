@@ -13,6 +13,7 @@ import time
 import json
 import logging
 from io import BytesIO
+from pricing import load_settings, save_settings
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,6 @@ async def _upload_tg_file(bot, file_id: str, file_name: str,
 # ── Google Sheets helpers ──────────────────────────────────────────────────────
 
 def _open_or_create_sheet(gc, sheet_id: str | None):
-    from pricing import load_settings, save_settings
     if sheet_id:
         try:
             return gc.open_by_key(sheet_id)
@@ -190,7 +190,6 @@ def _append_row(product: dict, settings: dict,
     # Persist sheet ID so future exports reuse the same file
     if not sheet_id:
         try:
-            from pricing import load_settings, save_settings
             s = load_settings()
             s["google_sheet_id"] = sh.id
             save_settings(s)

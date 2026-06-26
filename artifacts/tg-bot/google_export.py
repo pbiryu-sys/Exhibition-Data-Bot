@@ -29,10 +29,23 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
+# IMPORTANT: SHEET_HEADERS and row[] in _append_row() MUST always be identical order.
+# Never add/remove a header without adding/removing the matching row value at the same index.
 SHEET_HEADERS = [
-    "product_id", "sku", "factory", "category",
-    "fob_usd", "qty_40hq", "cost_price_kzt", "sell_price_kzt",
-    "exhibition", "created_at", "photos", "photo_url", "videos", "documents",
+    "product_id",     # 0
+    "sku",            # 1
+    "factory",        # 2
+    "category",       # 3
+    "fob_usd",        # 4
+    "qty_40hq",       # 5
+    "cost_price_kzt", # 6
+    "sell_price_kzt", # 7
+    "exhibition",     # 8
+    "created_at",     # 9
+    "photos_preview", # 10  =IMAGE(first_photo_url)
+    "photo_url",      # 11  raw Telegram CDN link(s), "\n"-joined
+    "videos",         # 12  raw video URLs
+    "documents",      # 13  raw doc URLs
 ]
 
 TG_TIMEOUT = 15  # seconds per get_file call
@@ -170,21 +183,22 @@ def _append_row(product: dict, settings: dict,
     ts = product.get("created_at")
     dt = datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M") if ts else ""
 
+    # IMPORTANT: index comments must match SHEET_HEADERS exactly (same order, same count).
     row = [
-        product.get("id", ""),
-        product.get("sku") or product.get("article") or "",
-        product.get("factory", ""),
-        product.get("category", ""),
-        fob,
-        qty,
-        round(cost_kzt, 2),
-        round(sell_kzt, 2),
-        product.get("exhibition", ""),
-        dt,
-        _to_sheet_image(photo_links[0]) if photo_links else "",
-        "\n".join(photo_links),
-        "\n".join(video_links),
-        "\n".join(doc_links),
+        product.get("id", ""),                                    # 0  product_id
+        product.get("sku") or product.get("article") or "",      # 1  sku
+        product.get("factory", ""),                               # 2  factory
+        product.get("category", ""),                              # 3  category
+        fob,                                                      # 4  fob_usd
+        qty,                                                      # 5  qty_40hq
+        round(cost_kzt, 2),                                       # 6  cost_price_kzt
+        round(sell_kzt, 2),                                       # 7  sell_price_kzt
+        product.get("exhibition", ""),                            # 8  exhibition
+        dt,                                                       # 9  created_at
+        _to_sheet_image(photo_links[0]) if photo_links else "",  # 10 photos_preview
+        "\n".join(photo_links),                                   # 11 photo_url
+        "\n".join(video_links),                                   # 12 videos
+        "\n".join(doc_links),                                     # 13 documents
     ]
 
     logger.info("Schema — headers=%d row=%d", len(SHEET_HEADERS), len(row))

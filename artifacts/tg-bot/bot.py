@@ -25,8 +25,6 @@ from context_store import (
     load_user_context, save_user_context, clear_user_context,
     get_factories, add_factory, delete_factory,
     get_exhibitions, add_exhibition, delete_exhibition, exhibition_display,
-    add_message_entry, get_all_message_entries,
-    get_recent_message_entries, clear_all_message_entries, remove_message_entries,
 )
 
 logging.basicConfig(
@@ -36,24 +34,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Module-level list; populated in main() so clear_history can reset FSM state.
-_conv_handlers: list = []
-
-
-# ─── Tracked reply helpers ───────────────────────────────────────────────────
-# Every bot message goes through these so message IDs are registered for
-# bulk-deletion on "Clear History".
+# ─── Reply helpers ───────────────────────────────────────────────────────────
 
 async def _reply(update: Update, *args, **kwargs) -> "Message":
-    sent = await update.message.reply_text(*args, **kwargs)
-    add_message_entry(update.effective_user.id, update.effective_chat.id, sent.message_id)
-    return sent
+    return await update.message.reply_text(*args, **kwargs)
 
 
 async def _reply_photo(update: Update, *args, **kwargs) -> "Message":
-    sent = await update.message.reply_photo(*args, **kwargs)
-    add_message_entry(update.effective_user.id, update.effective_chat.id, sent.message_id)
-    return sent
+    return await update.message.reply_photo(*args, **kwargs)
 
 ALLOWED_CATEGORIES = [
     "Беговая дорожка",
@@ -107,8 +95,7 @@ def _main_keyboard(ctx: dict) -> ReplyKeyboardMarkup:
         [
             [KeyboardButton("➕ Новый товар")],
             [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
-            [KeyboardButton("⚙️ Настройки"), KeyboardButton("🗑 Очистить историю")],
-            [KeyboardButton("🧹 Очистить бот за 48 часов")],
+            [KeyboardButton("⚙️ Настройки")],
         ],
         resize_keyboard=True,
     )
@@ -139,67 +126,6 @@ def _main_menu_text(ctx: dict) -> str:
         f"🎪 Активная выставка: <b>{exhibition}</b>\n"
         f"🏭 Активная фабрика: <b>{factory}</b>"
         f"{hint}"
-    )
-
-
-# ─── Clear history ──────────────────────────────────────────────────────────
-
-async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    # 1. Delete all tracked bot messages from the chat
-    for entry in get_all_message_entries(user_id):
-        try:
-            await context.bot.delete_message(chat_id=entry["chat_id"], message_id=entry["id"])
-        except Exception:
-            pass  # Already deleted, too old (>48h), or no permission — skip silently
-
-    # 2. Wipe persistent message log (keeps factories/exhibitions/active context)
-    clear_all_message_entries(user_id)
-
-    # 3. Reset every ConversationHandler's FSM state for this user.
-    #    Default key scheme: (chat_id, user_id)  [per_chat=True, per_user=True]
-    fsm_key = (chat_id, user_id)
-    for handler in _conv_handlers:
-        try:
-            handler._conversations.pop(fsm_key, None)
-        except Exception:
-            pass
-
-    # 4. Clear all in-memory session buffers
-    context.user_data.clear()
-    context.chat_data.clear()
-
-    await _reply(update,
-        "История полностью очищена. Нажмите /start",
-    )
-
-
-# ─── Clean last 48 hours ────────────────────────────────────────────────────
-
-async def clean_48h(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    import time as _time
-    user_id = update.effective_user.id
-    cutoff = _time.time() - 48 * 3600
-
-    entries = get_recent_message_entries(user_id, cutoff)
-    deleted_ids: set[int] = set()
-    for entry in entries:
-        try:
-            await context.bot.delete_message(
-                chat_id=entry["chat_id"], message_id=entry["id"]
-            )
-            deleted_ids.add(entry["id"])
-        except Exception:
-            deleted_ids.add(entry["id"])  # count as done even if already gone
-
-    remove_message_entries(user_id, deleted_ids)
-
-    ctx = load_user_context(user_id)
-    await update.message.reply_text(
-        f"🧹 Удалено сообщений за 48 ч: {len(deleted_ids)}.",
-        reply_markup=_main_keyboard(ctx),
     )
 
 
@@ -1044,19 +970,7 @@ def main() -> None:
         allow_reentry=True,
     )
 
-    # Populate the module-level registry so clear_history can reset FSM state.
-    _conv_handlers.extend([
-        product_conv,
-        factory_conv,
-        factory_mgmt_conv,
-        exhibition_conv,
-        exhibition_mgmt_conv,
-        settings_conv,
-    ])
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex("^🗑 Очистить историю$"), clear_history))
-    app.add_handler(MessageHandler(filters.Regex("^🧹 Очистить бот за 48 часов$"), clean_48h))
     app.add_handler(factory_mgmt_conv)
     app.add_handler(exhibition_mgmt_conv)
     app.add_handler(factory_conv)

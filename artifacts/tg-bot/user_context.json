@@ -28,12 +28,19 @@
     ],
     "active_factory": "Ypoo",
     "active_exhibition": " CSS27",
-    "message_ids": [
-      411,
-      413,
-      415,
-      417,
-      419
+    "messages": [
+      {
+        "id": 425,
+        "chat_id": 348641645,
+        "ts": 1782463866.160372,
+        "type": "bot"
+      },
+      {
+        "id": 427,
+        "chat_id": 348641645,
+        "ts": 1782464106.6750083,
+        "type": "bot"
+      }
     ]
   }
 }

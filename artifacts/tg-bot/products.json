@@ -138,5 +138,27 @@
         "added_by": 348641645
       }
     ]
+  },
+  {
+    "id": "a709e895-7714-42f1-9dc0-2ad2b123acae",
+    "created_by": 348641645,
+    "created_at": 1782468276.9929388,
+    "updated_by": null,
+    "updated_at": 1782468286.296494,
+    "sku": "АТМ6778",
+    "category": "Велотренажер",
+    "fob_usd": 1000.0,
+    "qty_40hq": 675,
+    "kz_price": 1499130.63,
+    "factory": "Lijiujia",
+    "exhibition": "CF26",
+    "note": "Подумать",
+    "hero_media": [
+      {
+        "type": "photo",
+        "file_id": "AgACAgIAAxkBAAIBxWo-RM4I8HJsEqlP7VJyfZJeYCERAAK0F2sbV6zwSV3Q9R1eQnyKAQADAgADeQADPAQ",
+        "timestamp": "2026-06-26T10:04"
+      }
+    ]
   }
 ]

@@ -345,16 +345,27 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         saved_id = saved["id"]
 
     chat_id = update.effective_chat.id
+    markup  = _card_markup(saved_id)
     if hero_media:
-        await _send_gallery(context.bot, chat_id, hero_media)
-
-    await _reply(update,
-        card_text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{saved_id}")]]
-        ),
-    )
+        first = hero_media[0]
+        if first["type"] == "photo":
+            sent = await context.bot.send_photo(
+                chat_id=chat_id, photo=first["file_id"],
+                caption=card_text, parse_mode=ParseMode.HTML, reply_markup=markup,
+            )
+        else:
+            sent = await context.bot.send_video(
+                chat_id=chat_id, video=first["file_id"],
+                caption=card_text, parse_mode=ParseMode.HTML, reply_markup=markup,
+            )
+    else:
+        sent = await update.message.reply_text(
+            card_text, parse_mode=ParseMode.HTML, reply_markup=markup,
+        )
+    update_product(saved_id, {
+        "card_message_id": sent.message_id,
+        "card_chat_id":    chat_id,
+    }, updated_by=user_id)
     return ConversationHandler.END
 
 
@@ -745,26 +756,6 @@ def _xp_keyboard(pid: str) -> InlineKeyboardMarkup:
     ])
 
 
-async def _xp_edit(
-    context: ContextTypes.DEFAULT_TYPE,
-    text: str,
-    keyboard: InlineKeyboardMarkup | None = None,
-) -> None:
-    msg_id  = context.user_data.get("_xp_msg_id")
-    chat_id = context.user_data.get("_xp_chat_id")
-    if msg_id and chat_id:
-        try:
-            await context.bot.edit_message_text(
-                text,
-                chat_id=chat_id,
-                message_id=msg_id,
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard,
-            )
-        except Exception as e:
-            logger.warning("_xp_edit failed: %s", e)
-
-
 def _card_markup(pid: str) -> InlineKeyboardMarkup:
     """Single 'Edit' button for a finished product card."""
     return InlineKeyboardMarkup(
@@ -772,51 +763,76 @@ def _card_markup(pid: str) -> InlineKeyboardMarkup:
     )
 
 
-async def _send_gallery(bot, chat_id: int, media_items: list) -> None:
-    """Send a list of photo/video items as a Telegram media group (album)."""
-    if not media_items:
+async def _xp_edit(
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    keyboard: InlineKeyboardMarkup | None = None,
+) -> None:
+    """Edit the panel/card message — uses caption edit for media cards, text edit for text cards."""
+    msg_id  = context.user_data.get("_xp_msg_id")
+    chat_id = context.user_data.get("_xp_chat_id")
+    if not msg_id or not chat_id:
         return
-    items = media_items[:10]  # Telegram hard limit
-    if len(items) == 1:
-        item = items[0]
-        if item["type"] == "photo":
-            await bot.send_photo(chat_id=chat_id, photo=item["file_id"])
+    is_media = context.user_data.get("_xp_is_media", False)
+    try:
+        if is_media:
+            await context.bot.edit_message_caption(
+                chat_id=chat_id,
+                message_id=msg_id,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
         else:
-            await bot.send_video(chat_id=chat_id, video=item["file_id"])
-        return
-    group = []
-    for item in items:
-        if item["type"] == "photo":
-            group.append(InputMediaPhoto(media=item["file_id"]))
-        else:
-            group.append(InputMediaVideo(media=item["file_id"]))
-    await bot.send_media_group(chat_id=chat_id, media=group)
+            await context.bot.edit_message_text(
+                text,
+                chat_id=chat_id,
+                message_id=msg_id,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+    except Exception as e:
+        logger.warning("_xp_edit failed (is_media=%s): %s", is_media, e)
 
 
 async def _restore_card(context: ContextTypes.DEFAULT_TYPE, pid: str) -> None:
-    """Load product from DB, rebuild full card, update the panel message in-place."""
+    """Reload product from DB, rebuild full card text, update message in-place."""
     p = get_product(pid)
     if not p:
         return
     settings = load_settings()
+    context.user_data["_xp_is_media"] = bool(p.get("hero_media"))
     await _xp_edit(context, format_card_from_db(p, settings), _card_markup(pid))
 
 
 async def edit_by_id_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point: inline button 'edit_<product_id>' on a product card."""
-    query = update.callback_query
+    query    = update.callback_query
     await query.answer()
-    pid = query.data[len("edit_"):]
-    p   = get_product(pid)
+    pid      = query.data[len("edit_"):]
+    p        = get_product(pid)
     if not p:
         await query.answer("⚠️ Товар не найден.", show_alert=True)
         return ConversationHandler.END
-    context.user_data["_xp_pid"]     = pid
-    context.user_data["_xp_msg_id"]  = query.message.message_id
-    context.user_data["_xp_chat_id"] = query.message.chat_id
-    await query.edit_message_text(
-        _xp_text(p), parse_mode=ParseMode.HTML, reply_markup=_xp_keyboard(pid)
-    )
+    is_media = bool(p.get("hero_media"))
+    context.user_data["_xp_pid"]      = pid
+    context.user_data["_xp_msg_id"]   = query.message.message_id
+    context.user_data["_xp_chat_id"]  = query.message.chat_id
+    context.user_data["_xp_is_media"] = is_media
+    panel_text   = _xp_text(p)
+    panel_markup = _xp_keyboard(pid)
+    try:
+        if is_media:
+            await query.edit_message_caption(
+                caption=panel_text, parse_mode=ParseMode.HTML, reply_markup=panel_markup
+            )
+        else:
+            await query.edit_message_text(
+                panel_text, parse_mode=ParseMode.HTML, reply_markup=panel_markup
+            )
+    except Exception as e:
+        logger.warning("edit_by_id_cb open failed: %s", e)
+        return ConversationHandler.END
     return EditPanelState.IDLE
 
 
@@ -985,36 +1001,96 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return EditPanelState.IDLE
 
 
-async def edit_panel_recv_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def _recv_media_item(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    media_type: str,
+    file_id: str,
+    stay_state: int,
+) -> int:
+    """
+    Shared handler for photo and video additions via the edit panel.
+
+    No media yet  → delete text card → send_photo/send_video with caption
+    Already media → editMessageMedia (replace visible media, keep caption updated)
+    Never sends separate floating messages.
+    """
     from datetime import datetime
+    pid     = context.user_data.get("_xp_pid", "")
+    chat_id = update.effective_chat.id
+    msg_id  = context.user_data.get("_xp_msg_id")
+    user_id = update.effective_user.id
+    ts      = datetime.now().strftime("%Y-%m-%dT%H:%M")
+
+    had_media = bool((get_product(pid) or {}).get("hero_media"))
+    add_hero_media(pid, {"type": media_type, "file_id": file_id, "timestamp": ts})
+    p        = get_product(pid)
+    settings = load_settings()
+    card_txt = format_card_from_db(p, settings)
+    markup   = _card_markup(pid)
+
+    if not had_media:
+        # Card was a text message — delete it and send a new photo/video card
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception as e:
+            logger.warning("delete old text card failed: %s", e)
+        if media_type == "photo":
+            sent = await context.bot.send_photo(
+                chat_id=chat_id, photo=file_id,
+                caption=card_txt, parse_mode=ParseMode.HTML, reply_markup=markup,
+            )
+        else:
+            sent = await context.bot.send_video(
+                chat_id=chat_id, video=file_id,
+                caption=card_txt, parse_mode=ParseMode.HTML, reply_markup=markup,
+            )
+        context.user_data["_xp_msg_id"]   = sent.message_id
+        context.user_data["_xp_is_media"] = True
+        update_product(pid, {
+            "card_message_id": sent.message_id,
+            "card_chat_id":    chat_id,
+        }, updated_by=user_id)
+    else:
+        # Card is already a media message — update media + caption in-place
+        media_obj = (
+            InputMediaPhoto(media=file_id, caption=card_txt, parse_mode=ParseMode.HTML)
+            if media_type == "photo"
+            else InputMediaVideo(media=file_id, caption=card_txt, parse_mode=ParseMode.HTML)
+        )
+        try:
+            await context.bot.edit_message_media(
+                chat_id=chat_id, message_id=msg_id,
+                media=media_obj, reply_markup=markup,
+            )
+        except Exception as e:
+            logger.warning("editMessageMedia failed: %s", e)
+
+    return ConversationHandler.END
+
+
+async def edit_panel_recv_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not update.message.photo:
         await update.message.reply_text("⚠️ Отправьте фото.")
         return EditPanelState.ADDING_PHOTO
-    pid     = context.user_data.get("_xp_pid", "")
-    chat_id = update.effective_chat.id
-    ts      = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    add_hero_media(pid, {"type": "photo", "file_id": update.message.photo[-1].file_id, "timestamp": ts})
-    p = get_product(pid)
-    if p:
-        await _send_gallery(context.bot, chat_id, p.get("hero_media", []))
-    await _restore_card(context, pid)
-    return ConversationHandler.END
+    return await _recv_media_item(
+        update, context,
+        media_type="photo",
+        file_id=update.message.photo[-1].file_id,
+        stay_state=EditPanelState.ADDING_PHOTO,
+    )
 
 
 async def edit_panel_recv_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    from datetime import datetime
     if not update.message.video:
         await update.message.reply_text("⚠️ Отправьте видео.")
         return EditPanelState.ADDING_VIDEO
-    pid     = context.user_data.get("_xp_pid", "")
-    chat_id = update.effective_chat.id
-    ts      = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    add_hero_media(pid, {"type": "video", "file_id": update.message.video.file_id, "timestamp": ts})
-    p = get_product(pid)
-    if p:
-        await _send_gallery(context.bot, chat_id, p.get("hero_media", []))
-    await _restore_card(context, pid)
-    return ConversationHandler.END
+    return await _recv_media_item(
+        update, context,
+        media_type="video",
+        file_id=update.message.video.file_id,
+        stay_state=EditPanelState.ADDING_VIDEO,
+    )
 
 
 async def edit_panel_recv_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

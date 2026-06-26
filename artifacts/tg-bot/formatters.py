@@ -3,9 +3,6 @@ from pricing import calculate_cost_per_unit
 
 
 def format_product_card(data: dict, settings: dict) -> str:
-    # ── Single shared input state ─────────────────────────────────────────────
-    # All pricing outputs (card + debug trace) derive from ONE call.
-    # qty_40hq is bound here from data["qty_40hq"] and nowhere else.
     _input_fob = data["price"]
     _input_qty = data["qty_40hq"]
 
@@ -15,9 +12,6 @@ def format_product_card(data: dict, settings: dict) -> str:
         settings=settings,
     )
 
-    # ── Input binding validation (inputs only — no Excel cells) ──────────────
-    # Checks that local binding variables match data dict exactly.
-    # Excel cells (E5, K5, …) are OUTPUTS and are never validated here.
     if _input_qty != data["qty_40hq"]:
         raise ValueError(
             f"INPUT_STATE_MISMATCH: _input_qty={_input_qty} != data['qty_40hq']={data['qty_40hq']}"
@@ -33,35 +27,23 @@ def format_product_card(data: dict, settings: dict) -> str:
     category   = data["category"]
     article    = data["article"]
     note       = data.get("note", "—")
-    tag        = f"{factory} | {exhibition}" if exhibition else factory
 
     lines = [
         f"📦 <b>{category} | {article}</b>",
         "",
-        f"🏭 Фабрика: <b>{factory}</b>",
-        f"🎪 Выставка: <b>{exhibition}</b>",
-        f"📅 Год: {year}",
+        f"🏭 {factory}",
+        f"🎪 {exhibition}",
+        f"📅 {year}",
         "",
-        f"💵 FOB цена: <b>${data['price']:.2f}</b>",
-        f"   → K5 (FOB KZT): {calc['fob_kzt']:,.0f} ₸",
-        f"📦 40HQ кол-во: <b>{data['qty_40hq']:,}</b> шт",
+        f"💵 FOB: <b>${_input_fob:,.2f}</b>  ·  {_input_qty:,} шт / 40HQ",
+        f"🚢 Контейнер: <b>${settings['container_cost']:,.0f}</b>",
         "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "💰 <b>Расчёт стоимости (KZT)</b>",
-        f"   Таможня N5:     {calc['N5']:,.0f} ₸",
-        f"   НДС O5:         {calc['O5_vat']:,.0f} ₸",
-        f"   Прочие сборы (P5–S5): {calc['P5']+calc['Q5']+calc['R5']+calc['S5']:,.0f} ₸",
-        f"   T5 (итого контейнер): <b>{calc['total_container']:,.0f} ₸</b>",
-        f"   Себестоимость U5: <b>{calc['unit_cost']:,.0f} ₸</b>",
-        "━━━━━━━━━━━━━━━━━━━━",
-        f"🏷 <b>Розничная цена: {calc['sell_price']:,.0f} ₸</b>",
-        f"   (маржа {int(settings['margin']*100)}%, НДС ×{settings['vat']})",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        f"📝 Заметка: {note}",
-        "",
-        f"🔗 Тег: {tag}",
+        f"💴 Себестоимость: <b>{calc['U5']:,.0f} ₸</b>",
+        f"🏷 Розничная цена: <b>{calc['G5']:,.0f} ₸</b>",
     ]
+
+    if note and note != "—":
+        lines += ["", f"📝 {note}"]
 
     if settings.get("debug_mode"):
         fob_usd  = data["price"]

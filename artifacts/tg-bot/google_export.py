@@ -291,9 +291,30 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
     video_links: list[str] = []
     doc_links:   list[str] = []
 
-    # ── Upfront media inventory dump ───────────────────────────────────────────
-    raw_hero  = product.get("hero_media") or []
-    raw_docs  = product.get("documents")  or []
+    # ── Full product state dump ─────────────────────────────────────────────────
+    logger.info("PRODUCT MEDIA STATE: %s", product)
+
+    # ── Multi-field fallback: build hero_media from any available photo field ──
+    raw_hero = product.get("hero_media") or []
+    raw_docs = product.get("documents")  or []
+
+    # If hero_media is empty, try to reconstruct from flat photo_file_id field
+    # (persisted directly on product record as a hard fallback)
+    if not raw_hero:
+        photo_file_id = (
+            product.get("photo_file_id")
+            or product.get("file_id")
+            or product.get("telegram_file_id")
+        )
+        logger.info("PHOTO FILE ID (fallback extraction): %s", photo_file_id)
+        if photo_file_id:
+            raw_hero = [{"type": "photo", "file_id": photo_file_id}]
+            logger.info("FORCED MEDIA DEBUG — built hero_media from photo_file_id: %s", raw_hero)
+        else:
+            logger.info("NO MEDIA FOUND — no photo_file_id on product, skip-safe upload mode")
+    else:
+        logger.info("HERO MEDIA (from product record): %s", raw_hero)
+
     logger.info(
         "MEDIA INVENTORY — hero_media=%d items, documents=%d items, drive_folder_id=%s",
         len(raw_hero), len(raw_docs), drive_folder_id or "(NOT SET)",

@@ -553,15 +553,17 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.info("hero_media is EMPTY — photo_file_id was %r", data.get("photo_file_id"))
 
     product_record = {
-        "sku":        data["article"],
-        "category":   data["category"],
-        "fob_usd":    data["price"],
-        "qty_40hq":   data["qty_40hq"],
-        "kz_price":   calc["G5"],
-        "factory":    data["factory"],
-        "exhibition": data["exhibition"],
-        "note":       data.get("note", "—"),
-        "hero_media": hero_media,
+        "sku":           data["article"],
+        "category":      data["category"],
+        "fob_usd":       data["price"],
+        "qty_40hq":      data["qty_40hq"],
+        "kz_price":      calc["G5"],
+        "factory":       data["factory"],
+        "exhibition":    data["exhibition"],
+        "note":          data.get("note", "—"),
+        "hero_media":    hero_media,
+        # Persist raw file_id so export can always find it even if hero_media list is empty
+        "photo_file_id": data.get("photo_file_id"),
     }
     if edit_pid:
         update_product(edit_pid, product_record, updated_by=user_id)

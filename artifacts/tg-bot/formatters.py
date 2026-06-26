@@ -106,7 +106,7 @@ def format_card_from_db(p: dict, settings: dict) -> str:
         datetime.fromtimestamp(p["created_at"]).year
         if p.get("created_at") else datetime.now().year
     )
-    att = p.get("attachments") or []
+    hero_media = p.get("hero_media") or []
 
     lines = [
         f"📦 <b>{category} | {article}</b>",
@@ -125,10 +125,15 @@ def format_card_from_db(p: dict, settings: dict) -> str:
     if note and note != "—":
         lines += ["", f"📝 {note}"]
 
-    if att:
-        last  = att[-1]
-        emoji = {"photo": "📸", "video": "📹", "note": "📝"}.get(last.get("type", ""), "📎")
-        lines.append(f"📎 Вложений: {len(att)} · {emoji}")
+    if hero_media:
+        n_photo = sum(1 for m in hero_media if m.get("type") == "photo")
+        n_video = sum(1 for m in hero_media if m.get("type") == "video")
+        parts = []
+        if n_photo:
+            parts.append(f"📸 {n_photo}")
+        if n_video:
+            parts.append(f"📹 {n_video}")
+        lines.append(f"🖼 Медиа: {' · '.join(parts)}")
 
     if settings.get("debug_mode"):
         O1       = calc["O1"]

@@ -93,6 +93,20 @@ def add_attachment(product_id: str, attachment: dict) -> bool:
     return False
 
 
+def add_hero_media(product_id: str, media_item: dict) -> bool:
+    """Append a photo or video to the product's hero_media gallery."""
+    products = _load()
+    for p in products:
+        if p["id"] == product_id:
+            if "hero_media" not in p:
+                p["hero_media"] = []
+            p["hero_media"].append(media_item)
+            p["updated_at"] = time.time()
+            _save(products)
+            return True
+    return False
+
+
 def delete_attachment(product_id: str, idx: int) -> bool:
     products = _load()
     for p in products:

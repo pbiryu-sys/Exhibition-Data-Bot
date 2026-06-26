@@ -9,6 +9,8 @@ from telegram import (
     KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    InputMediaPhoto,
+    InputMediaVideo,
 )
 from telegram.ext import (
     Application,
@@ -31,7 +33,7 @@ from context_store import (
 )
 from products import (
     save_product, get_products, get_product, delete_product, update_product,
-    add_attachment, delete_attachment,
+    add_attachment, delete_attachment, add_hero_media,
 )
 
 logging.basicConfig(
@@ -311,18 +313,29 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
 
     # Save to persistent catalog
+    from datetime import datetime as _dt
     calc = calculate_cost_per_unit(data["price"], data["qty_40hq"], settings)
     edit_pid = data.pop("_edit_product_id", None)
+
+    # Build hero_media from the optional creation-flow photo
+    hero_media: list = []
+    if data.get("photo_file_id"):
+        hero_media = [{
+            "type": "photo",
+            "file_id": data["photo_file_id"],
+            "timestamp": _dt.now().strftime("%Y-%m-%dT%H:%M"),
+        }]
+
     product_record = {
-        "sku":          data["article"],
-        "category":     data["category"],
-        "fob_usd":      data["price"],
-        "qty_40hq":     data["qty_40hq"],
-        "kz_price":     calc["G5"],
-        "factory":      data["factory"],
-        "exhibition":   data["exhibition"],
-        "note":         data.get("note", "—"),
-        "photo_file_id": data.get("photo_file_id"),
+        "sku":        data["article"],
+        "category":   data["category"],
+        "fob_usd":    data["price"],
+        "qty_40hq":   data["qty_40hq"],
+        "kz_price":   calc["G5"],
+        "factory":    data["factory"],
+        "exhibition": data["exhibition"],
+        "note":       data.get("note", "—"),
+        "hero_media": hero_media,
     }
     if edit_pid:
         update_product(edit_pid, product_record, updated_by=user_id)
@@ -330,6 +343,10 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         saved = save_product(product_record, created_by=user_id)
         saved_id = saved["id"]
+
+    chat_id = update.effective_chat.id
+    if hero_media:
+        await _send_gallery(context.bot, chat_id, hero_media)
 
     await _reply(update,
         card_text,
@@ -755,6 +772,27 @@ def _card_markup(pid: str) -> InlineKeyboardMarkup:
     )
 
 
+async def _send_gallery(bot, chat_id: int, media_items: list) -> None:
+    """Send a list of photo/video items as a Telegram media group (album)."""
+    if not media_items:
+        return
+    items = media_items[:10]  # Telegram hard limit
+    if len(items) == 1:
+        item = items[0]
+        if item["type"] == "photo":
+            await bot.send_photo(chat_id=chat_id, photo=item["file_id"])
+        else:
+            await bot.send_video(chat_id=chat_id, video=item["file_id"])
+        return
+    group = []
+    for item in items:
+        if item["type"] == "photo":
+            group.append(InputMediaPhoto(media=item["file_id"]))
+        else:
+            group.append(InputMediaVideo(media=item["file_id"]))
+    await bot.send_media_group(chat_id=chat_id, media=group)
+
+
 async def _restore_card(context: ContextTypes.DEFAULT_TYPE, pid: str) -> None:
     """Load product from DB, rebuild full card, update the panel message in-place."""
     p = get_product(pid)
@@ -947,24 +985,20 @@ async def edit_panel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return EditPanelState.IDLE
 
 
-async def _xp_receive_attachment(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, attachment: dict
-) -> int:
-    pid = context.user_data.get("_xp_pid", "")
-    add_attachment(pid, attachment)
-    await _restore_card(context, pid)
-    return ConversationHandler.END
-
-
 async def edit_panel_recv_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from datetime import datetime
     if not update.message.photo:
         await update.message.reply_text("⚠️ Отправьте фото.")
         return EditPanelState.ADDING_PHOTO
-    ts  = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    att = {"type": "photo", "file_id": update.message.photo[-1].file_id,
-           "timestamp": ts, "added_by": update.effective_user.id}
-    return await _xp_receive_attachment(update, context, att)
+    pid     = context.user_data.get("_xp_pid", "")
+    chat_id = update.effective_chat.id
+    ts      = datetime.now().strftime("%Y-%m-%dT%H:%M")
+    add_hero_media(pid, {"type": "photo", "file_id": update.message.photo[-1].file_id, "timestamp": ts})
+    p = get_product(pid)
+    if p:
+        await _send_gallery(context.bot, chat_id, p.get("hero_media", []))
+    await _restore_card(context, pid)
+    return ConversationHandler.END
 
 
 async def edit_panel_recv_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -972,21 +1006,26 @@ async def edit_panel_recv_video(update: Update, context: ContextTypes.DEFAULT_TY
     if not update.message.video:
         await update.message.reply_text("⚠️ Отправьте видео.")
         return EditPanelState.ADDING_VIDEO
-    ts  = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    att = {"type": "video", "file_id": update.message.video.file_id,
-           "timestamp": ts, "added_by": update.effective_user.id}
-    return await _xp_receive_attachment(update, context, att)
+    pid     = context.user_data.get("_xp_pid", "")
+    chat_id = update.effective_chat.id
+    ts      = datetime.now().strftime("%Y-%m-%dT%H:%M")
+    add_hero_media(pid, {"type": "video", "file_id": update.message.video.file_id, "timestamp": ts})
+    p = get_product(pid)
+    if p:
+        await _send_gallery(context.bot, chat_id, p.get("hero_media", []))
+    await _restore_card(context, pid)
+    return ConversationHandler.END
 
 
 async def edit_panel_recv_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    from datetime import datetime
     if not update.message.text:
         await update.message.reply_text("⚠️ Введите текст.")
         return EditPanelState.ADDING_NOTE
-    ts  = datetime.now().strftime("%Y-%m-%dT%H:%M")
-    att = {"type": "note", "text": update.message.text.strip(),
-           "timestamp": ts, "added_by": update.effective_user.id}
-    return await _xp_receive_attachment(update, context, att)
+    pid     = context.user_data.get("_xp_pid", "")
+    user_id = update.effective_user.id
+    update_product(pid, {"note": update.message.text.strip()}, updated_by=user_id)
+    await _restore_card(context, pid)
+    return ConversationHandler.END
 
 
 async def edit_panel_recv_cat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

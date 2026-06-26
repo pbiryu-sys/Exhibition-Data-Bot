@@ -102,5 +102,41 @@
         "added_by": 348641645
       }
     ]
+  },
+  {
+    "id": "6b7465c1-328d-42d1-af77-f624cd3a82ac",
+    "created_by": 348641645,
+    "created_at": 1782467796.574515,
+    "updated_by": null,
+    "updated_at": null,
+    "sku": "Оклада",
+    "category": "Велотренажер",
+    "fob_usd": 1000.0,
+    "qty_40hq": 675,
+    "kz_price": 1499130.63,
+    "factory": "Lijiujia",
+    "exhibition": "CF26",
+    "note": "Опладад",
+    "photo_file_id": null,
+    "attachments": [
+      {
+        "type": "video",
+        "file_id": "BAACAgIAAxkBAAICAmo-TO1TdglM_Ts1LQqZcqVocjaqAAJzmAACV6zwSUlAfNY8CoCoPAQ",
+        "timestamp": "2026-06-26T09:57",
+        "added_by": 348641645
+      },
+      {
+        "type": "photo",
+        "file_id": "AgACAgIAAxkBAAIBxWo-RM4I8HJsEqlP7VJyfZJeYCERAAK0F2sbV6zwSV3Q9R1eQnyKAQADAgADeQADPAQ",
+        "timestamp": "2026-06-26T09:57",
+        "added_by": 348641645
+      },
+      {
+        "type": "note",
+        "text": "Плохой товар, сомневаемся",
+        "timestamp": "2026-06-26T10:01",
+        "added_by": 348641645
+      }
+    ]
   }
 ]

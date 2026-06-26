@@ -3,9 +3,6 @@ import os
 
 CONTEXT_PATH = os.path.join(os.path.dirname(__file__), "user_context.json")
 
-DEFAULT_FACTORY = "DHZ"
-DEFAULT_EXHIBITION = "CF26"
-
 
 def _load_all() -> dict:
     if not os.path.exists(CONTEXT_PATH):
@@ -20,15 +17,16 @@ def _save_all(data: dict) -> None:
 
 
 def load_user_context(user_id: int) -> dict:
+    """Returns user context. factory/exhibition are None if not explicitly set."""
     all_data = _load_all()
     user = all_data.get(str(user_id), {})
     return {
-        "active_factory":    user.get("active_factory", DEFAULT_FACTORY),
-        "active_exhibition": user.get("active_exhibition", DEFAULT_EXHIBITION),
+        "active_factory":    user.get("active_factory"),    # None if not set
+        "active_exhibition": user.get("active_exhibition"), # None if not set
     }
 
 
-def save_user_context(user_id: int, active_factory: str, active_exhibition: str) -> None:
+def save_user_context(user_id: int, active_factory, active_exhibition) -> None:
     all_data = _load_all()
     all_data[str(user_id)] = {
         "active_factory":    active_factory,

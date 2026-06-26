@@ -32,7 +32,7 @@ SCOPES = [
 SHEET_HEADERS = [
     "product_id", "sku", "factory", "category",
     "fob_usd", "qty_40hq", "cost_price_kzt", "sell_price_kzt",
-    "exhibition", "created_at", "photos", "videos", "documents",
+    "exhibition", "created_at", "photos", "photo_url", "videos", "documents",
 ]
 
 TG_TIMEOUT = 15  # seconds per get_file call
@@ -182,6 +182,7 @@ def _append_row(product: dict, settings: dict,
         product.get("exhibition", ""),
         dt,
         _to_sheet_image(photo_links[0]) if photo_links else "",
+        "\n".join(photo_links),
         "\n".join(video_links),
         "\n".join(doc_links),
     ]

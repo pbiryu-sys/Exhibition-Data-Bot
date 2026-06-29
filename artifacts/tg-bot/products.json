@@ -992,5 +992,25 @@
     "text_message_id": 1101,
     "card_chat_id": 348641645,
     "status": "deleted"
+  },
+  {
+    "id": "7520fe24-018b-4bd2-8fa6-1bd8a4e6af27",
+    "created_by": 348641645,
+    "created_at": 1782719077.4124806,
+    "updated_by": 348641645,
+    "updated_at": 1782719077.8157816,
+    "sku": "Тест11",
+    "category": "Спин-байк",
+    "fob_usd": 567.0,
+    "qty_40hq": 765,
+    "kz_price": 854347.83,
+    "factory": "RH Fitness",
+    "exhibition": "CF 2026",
+    "note": "Берем",
+    "hero_media": [],
+    "photo_file_id": null,
+    "media_message_ids": [],
+    "text_message_id": 1125,
+    "card_chat_id": 348641645
   }
 ]

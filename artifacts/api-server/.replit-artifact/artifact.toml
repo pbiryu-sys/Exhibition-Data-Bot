@@ -1,16 +1,16 @@
 kind = "api"
 previewPath = "/api"
-title = "API Server"
+title = "Telegram Bot"
 version = "1.0.0"
 id = "3B4_FFSkEVBkAeYMFRJ2e"
 
 [[services]]
 localPort = 8080
-name = "API Server"
+name = "Telegram Bot"
 paths = ["/api"]
 
 [services.development]
-run = "pnpm --filter @workspace/api-server run dev"
+run = "python3 artifacts/tg-bot/main.py"
 
 [services.production]
 run = ["python3", "artifacts/tg-bot/main.py"]

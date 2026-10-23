@@ -55,6 +55,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# httpx logs every request URL, and the Telegram URL contains the bot token
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 
 # ─── Access gate (group=-1, runs before ALL other handlers) ──────────────────
 

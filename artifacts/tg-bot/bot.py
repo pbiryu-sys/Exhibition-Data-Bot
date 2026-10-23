@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 
 from telegram import (
@@ -31,7 +32,7 @@ from access import (
     get_owner_id, set_owner,
     add_user, remove_user, list_users, list_users_with_roles, find_by_username,
 )
-from pricing import load_settings, save_settings, calculate_cost_per_unit
+from pricing import load_settings, save_settings, calculate_cost_per_unit, calculate_pl
 from formatters import format_product_card, format_card_from_db, format_settings
 import google_export
 from context_store import (
@@ -237,7 +238,7 @@ async def _delete_flow_msgs(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception:
             pass
 
-ALLOWED_CATEGORIES = [
+DEFAULT_CATEGORIES = [
     "Беговая дорожка",
     "Велотренажер",
     "Спин-байк",
@@ -252,6 +253,14 @@ ALLOWED_CATEGORIES = [
     "Силовое оборудование",
     "Другое",
 ]
+
+
+def _categories() -> list:
+    return get_categories() or DEFAULT_CATEGORIES
+
+
+def _add_cat_label(name: str) -> str:
+    return f"➕ Добавить «{name}»"
 
 DATA_PROMPT = (
     "📋 <b>Введите данные товара одним сообщением:</b>\n\n"
@@ -278,6 +287,25 @@ SETTINGS_KEYS = [
     ("terminal_fee_kzt", "Терминал Q5, ₸"),
     ("storage_fee_kzt", "Хранение R5, ₸"),
     ("forwarder_fee_kzt", "Экспедитор S5, ₸"),
+    ("rub_to_kzt", "Курс RUB→KZT (T1)"),
+    ("ru_container_m3", "Объём контейнера, м³"),
+    ("ru_delivery_rub", "Доставка в РФ, ₽ (Z2)"),
+    ("ru_delivery_m3", "Объём для доставки, м³ (Z3)"),
+    ("ru_price_divisor", "Делитель цены РФ (AB, 0.22)"),
+    ("ru_vat", "НДС РФ множитель (AC, 1.22)"),
+    ("soinvest_discount", "Скидка СоИнвест (AD, 0.30)"),
+    ("pl_fx", "Польша: курс USD/PLN"),
+    ("pl_freight_usd", "Польша: фрахт 40HQ, $"),
+    ("pl_duty", "Польша: пошлина (0.027)"),
+    ("pl_commission", "Allegro: комиссия (0.105)"),
+    ("pl_commission_cap", "Allegro: лимит комиссии, zł"),
+    ("pl_ads", "Allegro Ads (0.07)"),
+    ("pl_delivery", "Доставка + 3PL, zł"),
+    ("pl_warranty", "Гарантия и возвраты (0.025)"),
+    ("pl_overhead", "Оверхед страны (0.05)"),
+    ("pl_cit", "CIT (0.19)"),
+    ("pl_vat", "НДС Польши (0.23)"),
+    ("pl_target_margin", "Целевая чистая маржа PL (0.08)"),
     ("google_sheet_id", "Google Sheet ID"),
     ("google_drive_folder_id", "Google Drive Folder ID (опц.)"),
     ("debug_mode", "Debug trace (вкл/выкл)"),
@@ -296,6 +324,7 @@ def _main_keyboard(user_id: int = None) -> ReplyKeyboardMarkup:
         [KeyboardButton("🏭 Фабрика"), KeyboardButton("🎪 Выставка")],
         [KeyboardButton("🏷 Категории")],
         [KeyboardButton(f"📦 Каталог ({count})")],
+        [KeyboardButton("🧮 Калькулятор")],
         [KeyboardButton("⚙️ Настройки")],
     ]
     if user_id and is_owner(user_id):
@@ -303,17 +332,24 @@ def _main_keyboard(user_id: int = None) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def _category_keyboard() -> ReplyKeyboardMarkup:
+def _category_keyboard(new_name: str | None = None) -> ReplyKeyboardMarkup:
+    cats = _categories()
+    other = "Другое" if "Другое" in cats else None
     buttons = []
+    if new_name:
+        buttons.append([KeyboardButton(_add_cat_label(new_name))])
     row = []
-    for cat in ALLOWED_CATEGORIES[:-1]:
+    for cat in cats:
+        if cat == other:
+            continue
         row.append(KeyboardButton(cat))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
-    buttons.append([KeyboardButton(ALLOWED_CATEGORIES[-1])])  # "Другое" alone
+    if other:
+        buttons.append([KeyboardButton(other)])  # "Другое" alone
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 
@@ -492,11 +528,14 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     })
 
     # Validate category
-    if category not in ALLOWED_CATEGORIES:
+    if category not in _categories():
+        new_name = category if len(category) <= 40 else None
+        context.user_data["_new_cat"] = new_name
         await _tracked_reply(update, context,
-            f"⚠️ Категория <b>{category}</b> не распознана.\n\nВыберите из списка:",
+            f"⚠️ Категория <b>{category}</b> не распознана.\n\n"
+            "Добавьте её кнопкой сверху или выберите из списка:",
             parse_mode=ParseMode.HTML,
-            reply_markup=_category_keyboard(),
+            reply_markup=_category_keyboard(new_name),
         )
         return ProductState.CATEGORY_PICK
 
@@ -507,10 +546,15 @@ async def product_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def product_category_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle category button selection when initial category was invalid."""
     text = update.message.text.strip()
-    if text not in ALLOWED_CATEGORIES:
+    new_name = context.user_data.get("_new_cat")
+    if new_name and text == _add_cat_label(new_name):
+        add_category(new_name, added_by=update.effective_user.id)
+        context.user_data.pop("_new_cat", None)
+        text = new_name
+    if text not in _categories():
         await _tracked_reply(update, context,
             "Пожалуйста, выберите категорию из кнопок ниже:",
-            reply_markup=_category_keyboard(),
+            reply_markup=_category_keyboard(new_name),
         )
         return ProductState.CATEGORY_PICK
     context.user_data["category"] = text
@@ -598,22 +642,6 @@ async def finish_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "text_message_id":   sent_text.message_id,
         "card_chat_id":      chat_id,
     }, updated_by=user_id)
-
-    # Auto-export to Google Sheets + Drive (fire-and-forget, non-blocking)
-    if google_export.is_configured() and not edit_pid:
-        saved_product = get_product(saved_id)
-        if saved_product:
-            import asyncio
-            import logging as _logging
-            _log = _logging.getLogger(__name__)
-
-            async def _do_export():
-                try:
-                    await google_export.export_product(saved_product, settings, context.bot)
-                except Exception as _exc:
-                    _log.error("Auto-export task raised unhandled exception: %s", _exc)
-
-            asyncio.ensure_future(_do_export())
 
     # Delete all tracked flow messages first, then restore the main keyboard.
     # IMPORTANT: confirm_msg must NOT be tracked — _delete_flow_msgs would erase
@@ -1698,7 +1726,9 @@ def _cat_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📋 Все товары",    callback_data="cat_all")],
     ]
     if google_export.is_configured():
-        rows.append([InlineKeyboardButton("📦 Экспорт всех", callback_data="cat_bulk_export")])
+        _pending = sum(1 for _p in get_active_products() if not _p.get("exported_at"))
+        rows.append([InlineKeyboardButton(f"📦 Экспорт невыгруженных ({_pending})",
+                                          callback_data="cat_bulk_export")])
     rows.append([InlineKeyboardButton("✖️ Закрыть", callback_data="cat_close")])
     return InlineKeyboardMarkup(rows)
 
@@ -1802,6 +1832,9 @@ def _catalog_detail_text(p: dict, settings: dict) -> str:
     if note:
         lines.append(f"📝 {note}")
     lines.append(f"\n🗓 Добавлено: {date_str}")
+    if p.get("exported_at"):
+        lines.append("📊 Выгружено в таблицу: " +
+                     datetime.fromtimestamp(p["exported_at"]).strftime("%d.%m.%Y %H:%M"))
     return "\n".join(lines)
 
 
@@ -1812,7 +1845,9 @@ def _catalog_detail_keyboard(pid: str) -> InlineKeyboardMarkup:
          InlineKeyboardButton("🗑 Удалить",           callback_data=f"cat_del_{pid}")],
     ]
     if google_export.is_configured():
-        rows.append([InlineKeyboardButton("📤 Экспорт в Google", callback_data=f"cat_export_{pid}")])
+        _done = (get_product(pid) or {}).get("exported_at")
+        _label = "🔁 Выгрузить повторно (будет дубль)" if _done else "📤 Экспорт в Google"
+        rows.append([InlineKeyboardButton(_label, callback_data=f"cat_export_{pid}")])
     rows.append([InlineKeyboardButton("🔙 Назад к списку", callback_data="cat_back")])
     return InlineKeyboardMarkup(rows)
 
@@ -1825,6 +1860,152 @@ def _catalog_confirm_keyboard(pid: str) -> InlineKeyboardMarkup:
 
 
 # ─── Catalog: open & handlers ─────────────────────────────────────────────────
+
+# ─── Quick calculator ─────────────────────────────────────────────────────────
+
+CALC_BTN      = "🧮 Калькулятор"
+CALC_EXIT_BTN = "⬅️ Выйти из калькулятора"
+_MENU_BUTTON_RE = re.compile(
+    r"^(➕ Новый товар|🏭 Фабрика|🎪 Выставка|🏷 Категории|⚙️ Настройки|👥 Админ|📦 Каталог.*)$"
+)
+_NUM_RE = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _calc_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[KeyboardButton(CALC_EXIT_BTN)]], resize_keyboard=True)
+
+
+def _pl_lines(fob: float, qty: int, settings: dict) -> list:
+    pct = round(settings.get("pl_target_margin", 0.08) * 100, 1)
+    pct = int(pct) if pct == int(pct) else pct
+    pl  = calculate_pl(fob, qty, settings)
+    if not pl:
+        return ["🇵🇱 Allegro: — (маржа недостижима при текущих настройках)"]
+    return [
+        f"🇵🇱 Allegro (чистая маржа {pct}%): <b>{pl['price']:,.0f} zł</b> с НДС",
+    ]
+
+
+def _calc_reply(fob: float, qty: int, settings: dict) -> str:
+    calc = calculate_cost_per_unit(fob, qty, settings)
+    disc = int(round(settings.get("soinvest_discount", 0.3) * 100))
+    return "\n".join([
+        f"💵 FOB <b>${fob:,.2f}</b>  ·  {qty:,} шт / 40HQ",
+        f"💴 Себестоимость (без НДС): <b>{calc['V5'] / qty:,.0f} ₸</b>",
+        f"🇰🇿 Розничная цена KZ: <b>{calc['G5']:,.0f} ₸</b>",
+        f"🇷🇺 Цена РФ (с НДС): <b>{calc['AC5']:,.0f} ₽</b>",
+        f"🤝 СоИнвест (−{disc}%): <b>{calc['AD5']:,.0f} ₽</b>",
+    ] + _pl_lines(fob, qty, settings))
+
+
+async def calc_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Group-2 text handler: opens the calculator, and answers while calculator mode is on."""
+    msg = update.effective_message
+    if not msg or not msg.text:
+        return
+    text = msg.text.strip()
+    user_id = update.effective_user.id
+
+    if text == CALC_BTN:
+        context.user_data["calc_mode"] = True
+        await msg.reply_text(
+            "🧮 <b>Калькулятор цен</b>\n\n"
+            "Отправьте цену FOB и количество в 40HQ, каждое с новой строки:\n"
+            "<code>100\n25</code>\n\n"
+            "Можно присылать сообщения одно за другим — на каждое придёт расчёт.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_calc_keyboard(),
+        )
+        return
+
+    if not context.user_data.get("calc_mode"):
+        return
+
+    if text == CALC_EXIT_BTN:
+        context.user_data.pop("calc_mode", None)
+        await msg.reply_text("Калькулятор закрыт.", reply_markup=_main_keyboard(user_id))
+        return
+
+    if _MENU_BUTTON_RE.match(text):
+        context.user_data.pop("calc_mode", None)
+        return
+
+    nums = _NUM_RE.findall(text)
+    if len(nums) < 2:
+        await msg.reply_text(
+            "⚠️ Нужны два числа: цена FOB и количество в 40HQ, например:\n<code>100\n25</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    try:
+        fob = float(nums[0].replace(",", "."))
+        qty = int(float(nums[1].replace(",", ".")))
+    except ValueError:
+        fob, qty = 0.0, 0
+    if fob <= 0 or qty <= 0:
+        await msg.reply_text("⚠️ Цена и количество должны быть больше нуля.")
+        return
+    await msg.reply_text(_calc_reply(fob, qty, load_settings()), parse_mode=ParseMode.HTML)
+
+
+# ─── Background bulk export ───────────────────────────────────────────────────
+
+_BULK_LOCK_KEY = "bulk_export_running"
+
+
+async def _bulk_export_job(app, chat_id: int, message_id: int, products: list, uid: int) -> None:
+    import time as _time
+    total      = len(products)
+    exported   = 0
+    failed_ids = []
+    settings   = load_settings()
+    try:
+        for i, product in enumerate(products, start=1):
+            pid = product.get("id", f"#{i}")
+            if i == 1 or i % 5 == 0:
+                try:
+                    await app.bot.edit_message_text(
+                        chat_id=chat_id, message_id=message_id,
+                        text=f"⏳ <b>Экспорт идёт в фоне…</b>\n\n{i - 1} / {total} товаров",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+            try:
+                result = await google_export.export_product(product, settings, app.bot)
+                if result.get("status") == "ok":
+                    exported += 1
+                    update_product(pid, {"exported_at": int(_time.time())}, updated_by=uid)
+                else:
+                    failed_ids.append(pid)
+                    logger.warning("Bulk export FAILED: product_id=%s status=%s error=%s",
+                                   pid, result.get("status"), result.get("error", ""))
+            except Exception:
+                failed_ids.append(pid)
+                logger.exception("Bulk export EXCEPTION: product_id=%s", pid)
+    finally:
+        app.bot_data.pop(_BULK_LOCK_KEY, None)
+
+    logger.info("Bulk export complete: %d/%d exported, %d failed", exported, total, len(failed_ids))
+    if failed_ids:
+        failed_text = "\n".join(f"• {fid}" for fid in failed_ids[:20])
+        if len(failed_ids) > 20:
+            failed_text += f"\n… и ещё {len(failed_ids) - 20}"
+        summary = (
+            f"⚠️ <b>Экспорт завершён с ошибками</b>\n\n"
+            f"✅ Выгружено: {exported} / {total}\n"
+            f"❌ Ошибок: {len(failed_ids)}\n\n"
+            f"<b>Не удалось выгрузить:</b>\n{failed_text}"
+        )
+    else:
+        summary = f"✅ <b>Экспорт завершён</b>\n\nВыгружено: {exported} / {total} товаров"
+    try:
+        await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id,
+                                        text="📦 Экспорт завершён.", parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+    await app.bot.send_message(chat_id=chat_id, text=summary, parse_mode=ParseMode.HTML)
+
 
 async def catalog_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["cat_filter_type"]  = "all"
@@ -2042,6 +2223,8 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         result = await google_export.export_product(p, settings, context.bot)
         if result["status"] == "ok":
+            import time as _time
+            update_product(pid, {"exported_at": int(_time.time())}, updated_by=uid)
             n_files = result["photos"] + result["videos"] + result["docs"]
             text = (
                 f"✅ <b>Экспорт выполнен</b>\n\n"
@@ -2063,78 +2246,31 @@ async def catalog_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return CatalogState.DETAIL
 
-    # ── Bulk export all products to Google Sheets ─────────────────────────
+    # ── Bulk export (background) ───────────────────────────────────────────
     if data == "cat_bulk_export":
         if not google_export.is_configured():
             await query.answer("⚠️ Google-интеграция не настроена.", show_alert=True)
             return CatalogState.MENU
-        all_products = get_active_products()  # same dataset the catalog shows — no deleted/hidden
-        total = len(all_products)
-        logger.info("BULK EXPORT: ACTIVE PRODUCTS COUNT = %d", total)
-        if total == 0:
-            await query.answer("📦 Нет товаров для экспорта.", show_alert=True)
+        if context.application.bot_data.get(_BULK_LOCK_KEY):
+            await query.answer("⏳ Экспорт уже идёт в фоне.", show_alert=True)
+            return CatalogState.MENU
+        pending = [p for p in get_active_products() if not p.get("exported_at")]
+        if not pending:
+            await query.answer("✅ Все товары уже выгружены.", show_alert=True)
             return CatalogState.MENU
 
-        await query.edit_message_text(
-            f"⏳ <b>Массовый экспорт…</b>\n\n0 / {total} товаров",
-            parse_mode=ParseMode.HTML,
-        )
-
-        settings = load_settings()
-        exported = 0
-        failed_ids: list[str] = []
-
-        for i, product in enumerate(all_products, start=1):
-            pid = product.get("id", f"#{i}")
-            logger.info("Bulk export %d/%d: product_id=%s", i, total, pid)
-            # Update progress every 5 products or on the first one
-            if i == 1 or i % 5 == 0:
-                try:
-                    await query.edit_message_text(
-                        f"⏳ <b>Массовый экспорт…</b>\n\n{i - 1} / {total} товаров",
-                        parse_mode=ParseMode.HTML,
-                    )
-                except Exception:
-                    pass  # Telegram may throttle edits — not critical
-
-            try:
-                result = await google_export.export_product(product, settings, context.bot)
-                if result.get("status") == "ok":
-                    exported += 1
-                    logger.info("Bulk export OK: product_id=%s", pid)
-                else:
-                    failed_ids.append(pid)
-                    logger.warning(
-                        "Bulk export FAILED: product_id=%s status=%s error=%s",
-                        pid, result.get("status"), result.get("error", ""),
-                    )
-            except Exception:
-                failed_ids.append(pid)
-                logger.exception("Bulk export EXCEPTION: product_id=%s", pid)
-
-        logger.info("Bulk export complete: %d/%d exported, %d failed", exported, total, len(failed_ids))
-
-        if failed_ids:
-            failed_text = "\n".join(f"• {fid}" for fid in failed_ids[:20])
-            if len(failed_ids) > 20:
-                failed_text += f"\n… и ещё {len(failed_ids) - 20}"
-            summary = (
-                f"⚠️ <b>Массовый экспорт завершён с ошибками</b>\n\n"
-                f"✅ Экспортировано: {exported} / {total}\n"
-                f"❌ Ошибок: {len(failed_ids)}\n\n"
-                f"<b>Не удалось экспортировать:</b>\n{failed_text}"
-            )
-        else:
-            summary = (
-                f"✅ <b>Массовый экспорт завершён</b>\n\n"
-                f"Экспортировано: {exported} / {total} товаров"
-            )
-
+        context.application.bot_data[_BULK_LOCK_KEY] = True
         back_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔙 В каталог", callback_data="cat_menu")],
         ])
         await query.edit_message_text(
-            summary, parse_mode=ParseMode.HTML, reply_markup=back_kb,
+            f"⏳ <b>Экспорт запущен в фоне</b>\n\n{len(pending)} товаров. Можно продолжать работу — "
+            "по окончании пришлю итог.",
+            parse_mode=ParseMode.HTML, reply_markup=back_kb,
+        )
+        context.application.create_task(
+            _bulk_export_job(context.application, query.message.chat_id,
+                             query.message.message_id, pending, uid)
         )
         return CatalogState.MENU
 
@@ -2737,6 +2873,8 @@ def main() -> None:
     app.add_handler(exhibition_panel_conv)
     app.add_handler(product_conv)
     app.add_handler(settings_panel_conv)
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, calc_router), group=2)
 
     # Standalone delete handler — registered at group=1 so it runs after ConversationHandlers
     # (group=0) but before the silent fallback (group=99). It is state-machine-independent:

@@ -40,12 +40,14 @@ SHEET_HEADERS = [
     "qty_40hq",       # 5
     "cost_price_kzt", # 6
     "sell_price_kzt", # 7
-    "exhibition",     # 8
-    "created_at",     # 9
-    "photos_preview", # 10  =IMAGE(first_photo_url)
-    "photo_url",      # 11  raw Telegram CDN link(s), "\n"-joined
-    "videos",         # 12  raw video URLs
-    "documents",      # 13  raw doc URLs
+    "price_rf_rub",   # 8   RU price incl. VAT (calc AC5)
+    "soinvest_rub",   # 9   SoInvest price (calc AD5)
+    "exhibition",     # 10
+    "created_at",     # 11
+    "photos_preview", # 12  =IMAGE(first_photo_url)
+    "photo_url",      # 13  raw Telegram CDN link(s), "\n"-joined
+    "videos",         # 14  raw video URLs
+    "documents",      # 15  raw doc URLs
 ]
 
 TG_TIMEOUT = 15  # seconds per get_file call
@@ -133,6 +135,11 @@ def _worksheet(sh):
         logger.info("Header row written OK")
     else:
         logger.info("Existing header (%d cols): %s", len(first_row), first_row)
+        if len(first_row) < len(SHEET_HEADERS):
+            for i in range(len(first_row), len(SHEET_HEADERS)):
+                ws.update_cell(1, i + 1, SHEET_HEADERS[i])
+            logger.info("Header extended to %d cols", len(SHEET_HEADERS))
+            first_row = SHEET_HEADERS[:]
         if len(first_row) != len(SHEET_HEADERS):
             logger.error(
                 "HEADER MISMATCH — sheet has %d cols, code expects %d. "
@@ -176,9 +183,11 @@ def _append_row(product: dict, settings: dict,
         calc     = calculate_cost_per_unit(fob, qty, settings)
         cost_kzt = calc.get("unit_cost", 0)
         sell_kzt = calc.get("sell_price", 0)
+        rf_rub   = calc.get("AC5", 0)
+        soi_rub  = calc.get("AD5", 0)
     except Exception:
         logger.exception("Pricing calc failed for product %s", product.get("id"))
-        cost_kzt = sell_kzt = 0
+        cost_kzt = sell_kzt = rf_rub = soi_rub = 0
 
     ts = product.get("created_at")
     dt = datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M") if ts else ""
@@ -193,12 +202,14 @@ def _append_row(product: dict, settings: dict,
         qty,                                                      # 5  qty_40hq
         round(cost_kzt, 2),                                       # 6  cost_price_kzt
         round(sell_kzt, 2),                                       # 7  sell_price_kzt
-        product.get("exhibition", ""),                            # 8  exhibition
-        dt,                                                       # 9  created_at
-        _to_sheet_image(photo_links[0]) if photo_links else "",  # 10 photos_preview
-        "\n".join(photo_links),                                   # 11 photo_url
-        "\n".join(video_links),                                   # 12 videos
-        "\n".join(doc_links),                                     # 13 documents
+        round(rf_rub, 2),                                         # 8  price_rf_rub
+        round(soi_rub, 2),                                        # 9  soinvest_rub
+        product.get("exhibition", ""),                            # 10 exhibition
+        dt,                                                       # 11 created_at
+        _to_sheet_image(photo_links[0]) if photo_links else "",  # 12 photos_preview
+        "\n".join(photo_links),                                   # 13 photo_url
+        "\n".join(video_links),                                   # 14 videos
+        "\n".join(doc_links),                                     # 15 documents
     ]
 
     logger.info("Schema — headers=%d row=%d", len(SHEET_HEADERS), len(row))
@@ -299,7 +310,8 @@ async def export_product(product: dict, settings: dict, bot) -> dict:
     # ── STEP 2: Write Sheets row ────────────────────────────────────────────────
     logger.info(">>> STEP 2: Sheets append")
     try:
-        sheet_url = _append_row(
+        sheet_url = await asyncio.to_thread(
+            _append_row,
             product, settings, photo_links, video_links, doc_links, sheet_id,
         )
     except Exception:

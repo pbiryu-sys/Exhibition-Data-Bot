@@ -21,7 +21,7 @@ import json
 import logging
 from io import BytesIO
 from datetime import datetime
-from pricing import load_settings, save_settings, calculate_cost_per_unit
+from pricing import load_settings, save_settings, calculate_cost_per_unit, calculate_pl
 
 logger = logging.getLogger(__name__)
 
@@ -33,21 +33,22 @@ SCOPES = [
 # Never add/remove a header without adding/removing the matching row value at the same index.
 SHEET_HEADERS = [
     "product_id",     # 0
-    "sku",            # 1
-    "factory",        # 2
-    "category",       # 3
-    "fob_usd",        # 4
-    "qty_40hq",       # 5
-    "cost_price_kzt", # 6
+    "exhibition",     # 1
+    "sku",            # 2
+    "factory",        # 3
+    "category",       # 4
+    "fob_usd",        # 5
+    "qty_40hq",       # 6
     "sell_price_kzt", # 7
     "price_rf_rub",   # 8   RU price incl. VAT (calc AC5)
     "soinvest_rub",   # 9   SoInvest price (calc AD5)
-    "exhibition",     # 10
+    "price_pl_pln",   # 10  Allegro price for the target net margin
     "created_at",     # 11
     "photos_preview", # 12  =IMAGE(first_photo_url)
     "photo_url",      # 13  raw Telegram CDN link(s), "\n"-joined
     "videos",         # 14  raw video URLs
     "documents",      # 15  raw doc URLs
+    "notes",          # 16  free-text note of the card
 ]
 
 TG_TIMEOUT = 15  # seconds per get_file call
@@ -135,6 +136,10 @@ def _worksheet(sh):
         logger.info("Header row written OK")
     else:
         logger.info("Existing header (%d cols): %s", len(first_row), first_row)
+        for i, want in enumerate(SHEET_HEADERS):
+            if i < len(first_row) and not first_row[i]:
+                ws.update_cell(1, i + 1, want)
+                logger.info("Header cell %d was blank — set to %s", i + 1, want)
         if len(first_row) < len(SHEET_HEADERS):
             for i in range(len(first_row), len(SHEET_HEADERS)):
                 ws.update_cell(1, i + 1, SHEET_HEADERS[i])
@@ -181,13 +186,19 @@ def _append_row(product: dict, settings: dict,
     qty = product.get("qty_40hq", 0)
     try:
         calc     = calculate_cost_per_unit(fob, qty, settings)
-        cost_kzt = calc.get("unit_cost", 0)
         sell_kzt = calc.get("sell_price", 0)
         rf_rub   = calc.get("AC5", 0)
         soi_rub  = calc.get("AD5", 0)
+        pl       = calculate_pl(fob, qty, settings)
+        pl_pln   = pl["price"] if pl else ""
     except Exception:
         logger.exception("Pricing calc failed for product %s", product.get("id"))
-        cost_kzt = sell_kzt = rf_rub = soi_rub = 0
+        sell_kzt = rf_rub = soi_rub = 0
+        pl_pln = ""
+
+    note = (product.get("note") or "").strip()
+    if note == "—":
+        note = ""
 
     ts = product.get("created_at")
     dt = datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M") if ts else ""
@@ -195,21 +206,22 @@ def _append_row(product: dict, settings: dict,
     # IMPORTANT: index comments must match SHEET_HEADERS exactly (same order, same count).
     row = [
         product.get("id", ""),                                    # 0  product_id
-        product.get("sku") or product.get("article") or "",      # 1  sku
-        product.get("factory", ""),                               # 2  factory
-        product.get("category", ""),                              # 3  category
-        fob,                                                      # 4  fob_usd
-        qty,                                                      # 5  qty_40hq
-        round(cost_kzt, 2),                                       # 6  cost_price_kzt
+        product.get("exhibition", ""),                            # 1  exhibition
+        product.get("sku") or product.get("article") or "",      # 2  sku
+        product.get("factory", ""),                               # 3  factory
+        product.get("category", ""),                              # 4  category
+        fob,                                                      # 5  fob_usd
+        qty,                                                      # 6  qty_40hq
         round(sell_kzt, 2),                                       # 7  sell_price_kzt
         round(rf_rub, 2),                                         # 8  price_rf_rub
         round(soi_rub, 2),                                        # 9  soinvest_rub
-        product.get("exhibition", ""),                            # 10 exhibition
+        pl_pln,                                                   # 10 price_pl_pln
         dt,                                                       # 11 created_at
         _to_sheet_image(photo_links[0]) if photo_links else "",  # 12 photos_preview
         "\n".join(photo_links),                                   # 13 photo_url
         "\n".join(video_links),                                   # 14 videos
         "\n".join(doc_links),                                     # 15 documents
+        note,                                                     # 16 notes
     ]
 
     logger.info("Schema — headers=%d row=%d", len(SHEET_HEADERS), len(row))
